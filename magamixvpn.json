@@ -1,0 +1,22 @@
+{
+  "name": "MAGAMIX VPN",
+  "type": "vless",
+  "server": "31.130.131.214",
+  "port": 443,
+  "uuid": "Автоген UUID (можно пустым, HAPP PLUS использует Short ID)",
+  "flow": "",
+  "security": "reality",
+  "fp": "chrome",
+  "sni": "www.microsoft.com",
+  "pbk": "Fc5uuBATtxZ5wNmz0YxFfHZEN2H25Cqudse7PPW_wR0",
+  "sk": "qPtq5KabSQNbW7Quv1bCuWBzOvyOkw0WsgPNVp9uR3w",
+  "short_ids": ["8b","87c72e","a55e4a67","082b0cc04005","93281c7c7dcc2a81","15518f9d8686e6","c2f8","37de7da930"],
+  "auth": "none",
+  "decryption": "none",
+  "encryption": "none",
+  "target": "www.microsoft.com:443",
+  "utls": "chrome",
+  "server_type": "IPv4",
+  "icon": "https://mnt/data/A_logo_for_\"MAGAMIX_VPN\"_is_featured_in_this_digit.png",
+  "autoconnect": true
+}

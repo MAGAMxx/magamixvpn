@@ -3,7 +3,7 @@
   "type": "vless",
   "server": "31.130.131.214",
   "port": 443,
-  "uuid": "Автоген UUID (можно пустым, HAPP PLUS использует Short ID)",
+  "uuid": "",
   "flow": "",
   "security": "reality",
   "fp": "chrome",
@@ -17,6 +17,6 @@
   "target": "www.microsoft.com:443",
   "utls": "chrome",
   "server_type": "IPv4",
-  "icon": "https://mnt/data/A_logo_for_\"MAGAMIX_VPN\"_is_featured_in_this_digit.png",
+  "icon": "https://share.google/images/WW8TSoOLwSzxeWwo0",
   "autoconnect": true
 }

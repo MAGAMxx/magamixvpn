@@ -17,6 +17,6 @@
   "target": "www.microsoft.com:443",
   "utls": "chrome",
   "server_type": "IPv4",
-  "icon": "https://mnt/data/A_logo_for_MAGAMIX_VPN.png",
+  "icon": "https://raw.githubusercontent.com/magamxx/magamixvpn/main/A_logo_for_MAGAMIX_VPN.png",
   "autoconnect": true
 }

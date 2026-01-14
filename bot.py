@@ -113,7 +113,7 @@ def create_hiddify_user(days: int, user_id: int):
     payload = {
         "name": "",
         "package_days": days,
-        "usage_limit_GB": 0,
+        "usage_limit_GB": 150,
         "mode": "no_reset"
     }
     try:

@@ -324,21 +324,43 @@ async def waiting_screenshot(callback: CallbackQuery):
 async def get_screenshot(message: Message, state: FSMContext):
     data = await state.get_data()
     user = message.from_user
+    
+    # Сообщение пользователю сразу после отправки чека
+    await message.answer(
+        "✅ Ваш чек получен!\n\n"
+        "👨‍💻Перевод находится на проверке у администратора.\n"
+        "🕧Пожалуйста, ожидайте — обычно это занимает от 5 до 30 минут.\n\n"
+        "Как только всё подтвердится, вы получите сообщение с доступом к VPN 🎉"
+    )
+    
+    # Формируем сообщение для админа 
     text = (
         f"🔥 НОВАЯ ОПЛАТА!\n"
         f"Пользователь: {user.full_name} (@{user.username or 'нет'})\n"
         f"ID: {user.id}\n"
         f"Тариф: {data['tarif']} ({data['days']} дней, {data['price']}₽)"
     )
+    
     kb = [
         [InlineKeyboardButton(text="✅ Выдать", callback_data=f"approve_{user.id}_{data['days']}")],
         [InlineKeyboardButton(text="❌ Отклонить", callback_data=f"reject_{user.id}")]
     ]
+    
     if message.photo:
-        await bot.send_photo(ADMIN_ID, message.photo[-1].file_id, caption=text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+        await bot.send_photo(
+            ADMIN_ID,
+            message.photo[-1].file_id,
+            caption=text,
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=kb)
+        )
     else:
-        await bot.send_document(ADMIN_ID, message.document.file_id, caption=text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
-    await message.answer("✅ Чек отправлен админу!", reply_markup=main_menu())
+        await bot.send_document(
+            ADMIN_ID,
+            message.document.file_id,
+            caption=text,
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=kb)
+        )
+
     await state.clear()
 
 @dp.callback_query(F.data.startswith("approve_"))
@@ -346,11 +368,34 @@ async def approve(callback: CallbackQuery):
     _, user_id_str, days_str = callback.data.split("_")
     user_id = int(user_id_str)
     days = int(days_str)
-
+    
     deeplink = create_hiddify_user(days, user_id)
+    
     if deeplink:
-        await bot.send_message(user_id, f"🎉 Оплата подтверждена!\n\nТвоя подписка на {days} дней:\n{deeplink}")
+        text = (
+            f"✅ Оплата подтверждена!\n\n"
+            f"Ваша подписка на **{days} дней** успешно добавлена 🎉\n\n"
+            f"Подключиться можно в любое время через кнопку\n"
+            f"«📲 Установить VPN» в главном меню"
+        )
+        
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📲 Перейти в главное меню", callback_data="back_main")]
+        ])
+        
+        await bot.send_message(
+            user_id,
+            text,
+            reply_markup=kb,
+            parse_mode="Markdown"
+        )
+        
         await callback.answer("Выдано!")
+        
+        await bot.send_message(
+            ADMIN_ID,
+            f"Подписка на {days} дней выдана пользователю {user_id} после оплаты"
+        )
     else:
         await bot.send_message(ADMIN_ID, f"❌ Ошибка создания подписки для {user_id}")
         await callback.answer("Ошибка")

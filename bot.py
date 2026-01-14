@@ -238,16 +238,10 @@ async def give_referral_bonus(referrer_id: int, referred_user_id: int):
         deeplink = create_hiddify_user(days_to_add, referrer_id)
         if deeplink:
             success = True
-            # ... сообщения ...
     
     conn.commit()
     conn.close()
     
-    if success:
-        try:
-            await bot.send_message(referrer_id, "🎉 Новый друг! +3 дня добавлено к подписке!")
-        except:
-            pass
 
 # Старт
 @dp.message(Command("start"))

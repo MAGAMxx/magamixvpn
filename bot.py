@@ -114,7 +114,7 @@ def create_hiddify_user(days: int, user_id: int):
         data = response.json()
         uuid = data.get("uuid")
         if uuid:
-            # Сохраняем подписку в БД
+            # Сохраняем в БД
             conn = sqlite3.connect(DB_FILE)
             c = conn.cursor()
             created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -124,12 +124,13 @@ def create_hiddify_user(days: int, user_id: int):
             conn.close()
 
             profile_link = f"{HIDDIFY_CLIENT_PATH}/{uuid}/"
-            deeplink = f"{DEEPLINK_BASE}{profile_link}"
-            return deeplink
+            return f"{DEEPLINK_BASE}{profile_link}"
         return None
     except Exception as e:
         logging.error(f"Ошибка API: {e}")
         return None
+
+
 # Главное меню
 async def send_main_menu(event, user_name, user_id):
     text = (
@@ -244,7 +245,7 @@ async def approve(callback: CallbackQuery):
     user_id = int(user_id_str)
     days = int(days_str)
 
-    deeplink = create_hiddify_user(days)
+    deeplink = create_hiddify_user(days, user_id)
     if deeplink:
         await bot.send_message(user_id, f"🎉 Оплата подтверждена!\n\nТвоя подписка на {days} дней:\n{deeplink}")
         await callback.answer("Выдано!")
@@ -279,7 +280,7 @@ async def check_free_sub(callback: CallbackQuery, state: FSMContext):
             if user_got_free(user_id):
                 await callback.message.edit_text("У тебя уже есть бесплатные 3 дня! Перейди в «Установить VPN»")
             else:
-                deeplink = create_hiddify_user(3)
+                deeplink = create_hiddify_user(3, callback.from_user.id)
                 if deeplink:
                     await callback.message.edit_text(
                         "🎉 Подписка подтверждена!\n\n"

@@ -179,12 +179,7 @@ async def start(message: Message):
 
     await send_main_menu(message, name, user_id)
 
-# Оплата
-@dp.callback_query(F.data == "pay")
-async def pay(callback: CallbackQuery):
-    await callback.message.edit_text("💸 Выбери тариф:", reply_markup=tarifs_menu())
-
-def tarifs_menu():
+def tarifs_menu()
     kb = []
     for name, (days, price) in TARIFS.items():
         text = f"{name} — {price}₽"
@@ -194,6 +189,12 @@ def tarifs_menu():
         kb.append([InlineKeyboardButton(text=text, callback_data=f"tarif_{name}")])
     kb.append([InlineKeyboardButton(text="🔙 Назад", callback_data="back_main")])
     return InlineKeyboardMarkup(inline_keyboard=kb)
+
+# Оплата
+@dp.callback_query(F.data == "pay")
+async def pay(callback: CallbackQuery):
+    await callback.message.edit_text("💸 Выбери тариф:", reply_markup=tarifs_menu())
+
 
 @dp.callback_query(F.data.startswith("tarif_"))
 async def tarif_chosen(callback: CallbackQuery, state: FSMContext):
@@ -340,6 +341,12 @@ async def referral(callback: CallbackQuery):
 @dp.callback_query(F.data == "back_main")
 async def back_main(callback: CallbackQuery):
     await send_main_menu(callback, callback.from_user.first_name, callback.from_user.id)
+
+async def main_menu():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="Главное меню", callback_data="back_main")]
+    ])
+
 
 async def main():
     await dp.start_polling(bot)

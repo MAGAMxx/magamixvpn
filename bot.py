@@ -582,14 +582,10 @@ async def main_menu():
 
 
 async def main():
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s - %(levelname)s - %(message)s"
-    )
+    logging.basicConfig(level=logging.INFO)
     print("🚀 Бот запущен")
     await dp.start_polling(
         bot,
-        allowed_updates=types.default_allowed_updates,
         drop_pending_updates=True
     )
 

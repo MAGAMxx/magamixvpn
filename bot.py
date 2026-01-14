@@ -309,17 +309,8 @@ async def check_free_sub(callback: CallbackQuery, state: FSMContext):
 async def install(callback: CallbackQuery):
     user_id = callback.from_user.id
     subs = get_user_subscriptions(user_id)
-
-    if subs:
-        text = "Твои активные подписки:\n\n"
-        kb = []
-        for uuid, days, created in subs:
-            text += f"• {days} дней (создана {created})\n"
-            deeplink = f"{DEEPLINK_BASE}{HIDDIFY_CLIENT_PATH}/{uuid}/"
-            kb.append([InlineKeyboardButton(text=f"Подключить ({days} дней)", url=deeplink)])
-        kb.append([InlineKeyboardButton(text="🔙 Главное меню", callback_data="back_main")])
-        await callback.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
-    else:
+    
+    if not subs:
         text = "У тебя нет активных подписок.\n\nОформи тариф или возьми 3 дня бесплатно!"
         kb = [
             [InlineKeyboardButton(text="💳 Оплатить VPN", callback_data="pay")],
@@ -327,6 +318,64 @@ async def install(callback: CallbackQuery):
             [InlineKeyboardButton(text="🔙 Главное меню", callback_data="back_main")]
         ]
         await callback.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+        return
+
+    # Есть подписки → показываем одну кнопку с рандомным 6-значным числом
+    import random
+    fake_code = random.randint(100000, 999999)
+    
+    text = "Ваши активные подписки:\n\nНажмите для установки"
+    
+    kb = [
+        [InlineKeyboardButton(text=f"{fake_code}", callback_data="select_device")],
+        [InlineKeyboardButton(text="🔙 Главное меню", callback_data="back_main")]
+    ]
+    
+    await callback.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+
+@dp.callback_query(F.data == "select_device")
+async def select_device(callback: CallbackQuery):
+    text = "Выберите свое устройство ниже для получения инструкции:"
+    
+    kb = [
+        [InlineKeyboardButton(text="📱Android", callback_data="device_Android")],
+        [InlineKeyboardButton(text="🍎iOS",     callback_data="device_iOS")],
+        [InlineKeyboardButton(text="🖥️Windows", callback_data="device_Windows")],
+        [InlineKeyboardButton(text="💻MacOS",   callback_data="device_MacOS")],
+        [InlineKeyboardButton(text="🔙 Главное меню", callback_data="back_main")]
+    ]
+    
+    await callback.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+
+@dp.callback_query(F.data.startswith("device_"))
+async def device_instruction(callback: CallbackQuery):
+    platform = callback.data.split("_", 1)[1]  # Android / iOS / Windows / MacOS
+    
+    # Берём первую (самую свежую) активную подписку пользователя
+    user_id = callback.from_user.id
+    subs = get_user_subscriptions(user_id)
+    if not subs:
+        await callback.message.edit_text("Подписка не найдена. Попробуйте позже или обратитесь в поддержку.")
+        return
+    
+    # Берём первую подписку (можно потом доработать выбор, если подписок много)
+    uuid, days, created_at = subs[0]
+    deeplink = f"{DEEPLINK_BASE}{HIDDIFY_CLIENT_PATH}/{uuid}/"
+    
+    text = (
+        "✅Скачайте и установите приложение Happ нажав на первую кнопку ниже «🔗Скачать приложение»\n\n"
+        "✅Вставьте свою подписку в приложение нажав на вторую кнопку ниже «🗝️Добавить подписку»\n\n"
+        "⚡Нажмите на большую кнопку в приложении Happ и наслаждайтесь скоростью."
+    )
+    
+    kb = [
+        [InlineKeyboardButton(text="🔗Скачать приложение", url=HAPP_LINKS.get(platform, HAPP_LINKS["Android"]))],
+        [InlineKeyboardButton(text="🗝️Добавить подписку", url=deeplink)],
+        [InlineKeyboardButton(text="🔙 Главное меню", callback_data="back_main")]
+    ]
+    
+    await callback.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+    
         
 # Пригласить друзей
 @dp.callback_query(F.data == "referral")

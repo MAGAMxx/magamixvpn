@@ -54,6 +54,16 @@ def init_db():
             got_free INTEGER DEFAULT 0
         )
     ''')
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS subscriptions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            uuid TEXT UNIQUE,
+            days INTEGER,
+            created_at TEXT,
+            status TEXT DEFAULT 'active'
+        )
+    ''')
     conn.commit()
     conn.close()
 
@@ -89,7 +99,7 @@ def mark_got_free(user_id: int):
     conn.close()
 
 # Создание пользователя в Hiddify
-def create_hiddify_user(days: int):
+def create_hiddify_user(days: int, user_id: int):
     url = f"{HIDDIFY_ADMIN_PATH}/api/v2/admin/user/"
     headers = {"Hiddify-API-Key": API_KEY, "Content-Type": "application/json"}
     payload = {
@@ -104,13 +114,22 @@ def create_hiddify_user(days: int):
         data = response.json()
         uuid = data.get("uuid")
         if uuid:
+            # Сохраняем подписку в БД
+            conn = sqlite3.connect(DB_FILE)
+            c = conn.cursor()
+            created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            c.execute("INSERT INTO subscriptions (user_id, uuid, days, created_at, status) VALUES (?, ?, ?, ?, ?)",
+                      (user_id, uuid, days, created_at, "active"))
+            conn.commit()
+            conn.close()
+
             profile_link = f"{HIDDIFY_CLIENT_PATH}/{uuid}/"
-            return f"{DEEPLINK_BASE}{profile_link}"
+            deeplink = f"{DEEPLINK_BASE}{profile_link}"
+            return deeplink
         return None
     except Exception as e:
         logging.error(f"Ошибка API: {e}")
         return None
-
 # Главное меню
 async def send_main_menu(event, user_name, user_id):
     text = (
@@ -137,6 +156,14 @@ async def send_main_menu(event, user_name, user_id):
         await event.answer(text, reply_markup=markup)
     else:
         await event.message.edit_text(text, reply_markup=markup)
+
+def get_user_subscriptions(user_id: int):
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("SELECT uuid, days, created_at FROM subscriptions WHERE user_id = ? AND status = 'active'", (user_id,))
+    subs = c.fetchall()
+    conn.close()
+    return subs
 
 # Старт
 @dp.message(Command("start"))
@@ -272,13 +299,27 @@ async def check_free_sub(callback: CallbackQuery, state: FSMContext):
 # Установить VPN
 @dp.callback_query(F.data == "install")
 async def install(callback: CallbackQuery):
-    text = "У тебя нет активных подписок.\nОформи тариф или возьми 3 дня бесплатно!"
-    kb = [
-        [InlineKeyboardButton(text="🎁 Бесплатно 3 дня", callback_data="free_3days")],
-        [InlineKeyboardButton(text="🔙 Главное меню", callback_data="back_main")]
-    ]
-    await callback.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+    user_id = callback.from_user.id
+    subs = get_user_subscriptions(user_id)
 
+    if subs:
+        text = "Твои активные подписки:\n\n"
+        kb = []
+        for uuid, days, created in subs:
+            text += f"• {days} дней (создана {created})\n"
+            deeplink = f"{DEEPLINK_BASE}{HIDDIFY_CLIENT_PATH}/{uuid}/"
+            kb.append([InlineKeyboardButton(text=f"Подключить ({days} дней)", url=deeplink)])
+        kb.append([InlineKeyboardButton(text="🔙 Главное меню", callback_data="back_main")])
+        await callback.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+    else:
+        text = "У тебя нет активных подписок.\n\nОформи тариф или возьми 3 дня бесплатно!"
+        kb = [
+            [InlineKeyboardButton(text="💳 Оплатить VPN", callback_data="pay")],
+            [InlineKeyboardButton(text="🎁 Бесплатно 3 дня", callback_data="free_3days")],
+            [InlineKeyboardButton(text="🔙 Главное меню", callback_data="back_main")]
+        ]
+        await callback.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+        
 # Пригласить друзей
 @dp.callback_query(F.data == "referral")
 async def referral(callback: CallbackQuery):

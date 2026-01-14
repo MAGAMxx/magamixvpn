@@ -2,6 +2,7 @@ import asyncio
 import logging
 import sqlite3
 import requests
+from datetime import datetime
 
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
@@ -58,18 +59,20 @@ def init_db():
 
 init_db()
 
-# ================================================
+def add_user_if_new(user_id: int, username: str):
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("SELECT user_id FROM users WHERE user_id = ?", (user_id,))
+    if not c.fetchone():
+        reg_date = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        c.execute("INSERT INTO users (user_id, username, reg_date) VALUES (?, ?, ?)",
+                  (user_id, username, reg_date))
+        conn.commit()
+        conn.close()
+        return True  # новый
+    conn.close()
+    return False
 
-bot = Bot(token=BOT_TOKEN)
-storage = MemoryStorage()
-dp = Dispatcher(storage=storage)
-logging.basicConfig(level=logging.INFO)
-
-class States(StatesGroup):
-    waiting_payment_screenshot = State()
-    waiting_free_check = State()
-
-# Получить статус бесплатных дней
 def user_got_free(user_id: int):
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
@@ -78,20 +81,19 @@ def user_got_free(user_id: int):
     conn.close()
     return result[0] == 1 if result else False
 
-# Отметить получение бесплатных дней
 def mark_got_free(user_id: int):
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
-    c.execute("INSERT OR REPLACE INTO users (user_id, got_free) VALUES (?, 1)", (user_id,))
+    c.execute("UPDATE users SET got_free = 1 WHERE user_id = ?", (user_id,))
     conn.commit()
     conn.close()
 
-# Создание пользователя в Hiddify (имя пустое, ссылка в нужном формате)
+# Создание пользователя в Hiddify
 def create_hiddify_user(days: int):
     url = f"{HIDDIFY_ADMIN_PATH}/api/v2/admin/user/"
     headers = {"Hiddify-API-Key": API_KEY, "Content-Type": "application/json"}
     payload = {
-        "name": "",  # Пустое имя
+        "name": "",
         "package_days": days,
         "usage_limit_GB": 0,
         "mode": "no_reset"
@@ -103,14 +105,13 @@ def create_hiddify_user(days: int):
         uuid = data.get("uuid")
         if uuid:
             profile_link = f"{HIDDIFY_CLIENT_PATH}/{uuid}/"
-            deeplink = f"{DEEPLINK_BASE}{profile_link}"
-            return deeplink
+            return f"{DEEPLINK_BASE}{profile_link}"
         return None
     except Exception as e:
         logging.error(f"Ошибка API: {e}")
         return None
 
-# Главное меню (кнопка бесплатных дней только если не получал)
+# Главное меню
 async def send_main_menu(event, user_name, user_id):
     text = (
         f"Привет, {user_name} 👋\n\n"
@@ -142,13 +143,93 @@ async def send_main_menu(event, user_name, user_id):
 async def start(message: Message):
     name = message.from_user.first_name
     user_id = message.from_user.id
-    await send_main_menu(message, name, user_id)
-    await bot.send_message(ADMIN_ID, f"Новый пользователь: {message.from_user.full_name} (ID: {user_id})")
+    username = message.from_user.username or "нет"
 
-# Оплата (оставляем как было, добавь свои хендлеры если нужно)
+    is_new = add_user_if_new(user_id, username)
+    if is_new:
+        await bot.send_message(ADMIN_ID, f"Новый пользователь: {message.from_user.full_name} (ID: {user_id})")
+
+    await send_main_menu(message, name, user_id)
+
+# Оплата
 @dp.callback_query(F.data == "pay")
 async def pay(callback: CallbackQuery):
     await callback.message.edit_text("💸 Выбери тариф:", reply_markup=tarifs_menu())
+
+def tarifs_menu():
+    kb = []
+    for name, (days, price) in TARIFS.items():
+        text = f"{name} — {price}₽"
+        if days > 30:
+            monthly = round(price / (days / 30))
+            text += f" ({monthly}₽/мес)"
+        kb.append([InlineKeyboardButton(text=text, callback_data=f"tarif_{name}")])
+    kb.append([InlineKeyboardButton(text="🔙 Назад", callback_data="back_main")])
+    return InlineKeyboardMarkup(inline_keyboard=kb)
+
+@dp.callback_query(F.data.startswith("tarif_"))
+async def tarif_chosen(callback: CallbackQuery, state: FSMContext):
+    tarif_name = callback.data.split("_", 1)[1]
+    days, price = TARIFS[tarif_name]
+    await state.update_data(tarif=tarif_name, days=days, price=price)
+
+    text = (
+        f"Последний штрих ⚡\n\n"
+        f"Оплата:\nНомер: 79283376737\nБанк: ОЗОН БАНК\nСумма: {price}₽\n\n"
+        f"Нажми «Я оплатил» и пришли скрин."
+    )
+    kb = [
+        [InlineKeyboardButton(text="✅ Я оплатил", callback_data="paid")],
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="pay")]
+    ]
+    await callback.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+    await state.set_state(States.waiting_payment_screenshot)
+
+@dp.callback_query(F.data == "paid", States.waiting_payment_screenshot)
+async def waiting_screenshot(callback: CallbackQuery):
+    await callback.message.edit_text("📸 Отправь скриншот перевода. Админ проверит.")
+    # Состояние остаётся для фото
+
+@dp.message((F.photo | F.document), States.waiting_payment_screenshot)
+async def get_screenshot(message: Message, state: FSMContext):
+    data = await state.get_data()
+    user = message.from_user
+    text = (
+        f"🔥 НОВАЯ ОПЛАТА!\n"
+        f"Пользователь: {user.full_name} (@{user.username or 'нет'})\n"
+        f"ID: {user.id}\n"
+        f"Тариф: {data['tarif']} ({data['days']} дней, {data['price']}₽)"
+    )
+    kb = [
+        [InlineKeyboardButton(text="✅ Выдать", callback_data=f"approve_{user.id}_{data['days']}")],
+        [InlineKeyboardButton(text="❌ Отклонить", callback_data=f"reject_{user.id}")]
+    ]
+    if message.photo:
+        await bot.send_photo(ADMIN_ID, message.photo[-1].file_id, caption=text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+    else:
+        await bot.send_document(ADMIN_ID, message.document.file_id, caption=text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+    await message.answer("✅ Чек отправлен админу!", reply_markup=main_menu())
+    await state.clear()
+
+@dp.callback_query(F.data.startswith("approve_"))
+async def approve(callback: CallbackQuery):
+    _, user_id_str, days_str = callback.data.split("_")
+    user_id = int(user_id_str)
+    days = int(days_str)
+
+    deeplink = create_hiddify_user(days)
+    if deeplink:
+        await bot.send_message(user_id, f"🎉 Оплата подтверждена!\n\nТвоя подписка на {days} дней:\n{deeplink}")
+        await callback.answer("Выдано!")
+    else:
+        await bot.send_message(ADMIN_ID, f"❌ Ошибка создания подписки для {user_id}")
+        await callback.answer("Ошибка")
+
+@dp.callback_query(F.data.startswith("reject_"))
+async def reject(callback: CallbackQuery):
+    _, user_id = callback.data.split("_")
+    await bot.send_message(int(user_id), "❌ Оплата не подтверждена. Проверь данные или пиши в поддержку.")
+    await callback.answer("Отклонено")
 
 # Бесплатные 3 дня
 @dp.callback_query(F.data == "free_3days")
@@ -178,7 +259,7 @@ async def check_free_sub(callback: CallbackQuery, state: FSMContext):
                         "Подписка на 3 дня выдана!\n\n"
                         "Подключиться можете через главное меню → «Установить VPN»"
                     )
-                    mark_got_free(user_id)  # ставим флаг
+                    mark_got_free(user_id)
                     await bot.send_message(ADMIN_ID, f"Бесплатно 3 дня выданы: {callback.from_user.full_name} ({user_id})")
                 else:
                     await callback.message.edit_text("❌ Ошибка выдачи. Напиши в поддержку.")

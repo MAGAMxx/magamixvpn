@@ -320,16 +320,24 @@ async def install(callback: CallbackQuery):
         await callback.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
         return
 
-    # Есть подписки → показываем одну кнопку с рандомным 6-значным числом
+    # Есть подписки
     import random
-    fake_code = random.randint(100000, 999999)
     
     text = "Ваши активные подписки:\n\nНажмите для установки"
     
-    kb = [
-        [InlineKeyboardButton(text=f"{fake_code}", callback_data="select_device")],
-        [InlineKeyboardButton(text="🔙 Главное меню", callback_data="back_main")]
-    ]
+    kb = []
+    
+    for uuid, days, created_at in subs:
+        fake_code = random.randint(100000, 999999)
+        button_text = f"{fake_code} ({days} дней)"
+        
+        kb.append([InlineKeyboardButton(
+            text=button_text,
+            callback_data=f"select_device_{uuid}"
+        )])
+
+    
+    kb.append([InlineKeyboardButton(text="🔙 Главное меню", callback_data="back_main")])
     
     await callback.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
 

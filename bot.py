@@ -40,6 +40,14 @@ HAPP_LINKS = {
     "MacOS": "https://apps.apple.com/ru/app/happ-proxy-utility-plus/id6746188973"
 }
 
+bot = Bot(token=BOT_TOKEN)
+storage = MemoryStorage()
+dp = Dispatcher(storage=storage)
+
+class States(StatesGroup):
+    waiting_payment_screenshot = State()
+    waiting_free_check = State()
+
 # База данных
 DB_FILE = "users.db"
 
@@ -172,11 +180,9 @@ async def start(message: Message):
     name = message.from_user.first_name
     user_id = message.from_user.id
     username = message.from_user.username or "нет"
-
     is_new = add_user_if_new(user_id, username)
     if is_new:
         await bot.send_message(ADMIN_ID, f"Новый пользователь: {message.from_user.full_name} (ID: {user_id})")
-
     await send_main_menu(message, name, user_id)
 
 def tarifs_menu():

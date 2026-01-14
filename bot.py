@@ -166,6 +166,19 @@ def update_hiddify_user_days(uuid: str, new_total_days: int) -> bool:
         logging.error(f"Общая ошибка обновления {uuid}: {e}")
         return False
 
+def tarifs_menu():
+    kb = []
+    for name, (days, price) in TARIFS.items():
+        text = f"{name} — {price}₽"
+        if days > 30:
+            monthly = round(price / (days / 30))
+            text += f"  ({monthly}₽/мес)"
+        kb.append([InlineKeyboardButton(text=text, callback_data=f"tarif_{name}")])
+    
+    kb.append([InlineKeyboardButton(text="🔙 Назад", callback_data="back_main")])
+    
+    return InlineKeyboardMarkup(inline_keyboard=kb)
+
 
 # Главное меню
 async def send_main_menu(event, user_name, user_id):

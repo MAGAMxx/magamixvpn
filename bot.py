@@ -174,27 +174,106 @@ def get_user_subscriptions(user_id: int):
     conn.close()
     return subs
 
+async def give_referral_bonus(referrer_id: int, referred_user_id: int):
+    """
+    Добавляет +3 дня рефереру.
+    Если есть активная подписка — продлевает её.
+    Если нет — создаёт новую на 3 дня.
+    """
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+
+    # Ищем самую свежую активную подписку реферера
+    c.execute("""
+        SELECT id, uuid, days, created_at 
+        FROM subscriptions 
+        WHERE user_id = ? AND status = 'active'
+        ORDER BY created_at DESC 
+        LIMIT 1
+    """, (referrer_id,))
+    existing = c.fetchone()
+
+    days_to_add = 3
+
+    if existing:
+        # Есть активная подписка — продлеваем её
+        sub_id, uuid, current_days, created_at = existing
+
+        # Можно просто увеличить days в базе (самый простой способ)
+        new_days = current_days + days_to_add
+
+        c.execute("""
+            UPDATE subscriptions 
+            SET days = ? 
+            WHERE id = ?
+        """, (new_days, sub_id))
+
+        # Сообщаем админу (опционально)
+        await bot.send_message(
+            ADMIN_ID,
+            f"Реферал от {referred_user_id} → +{days_to_add} дней пользователю {referrer_id} (продление)"
+        )
+
+    else:
+        # Нет активной — создаём новую на 3 дня
+        deeplink = create_hiddify_user(days_to_add, referrer_id)
+        if deeplink:
+            await bot.send_message(
+                referrer_id,
+                f"🎁 Ты получил 3 дня по реферальной программе!\n\nСсылка: {deeplink}"
+            )
+            await bot.send_message(
+                ADMIN_ID,
+                f"Реферал от {referred_user_id} → новая подписка 3 дня для {referrer_id}"
+            )
+        else:
+            await bot.send_message(ADMIN_ID, f"Ошибка создания реф. бонуса для {referrer_id}")
+
+    conn.commit()
+    conn.close()
+
 # Старт
 @dp.message(Command("start"))
 async def start(message: Message):
-    name = message.from_user.first_name
     user_id = message.from_user.id
     username = message.from_user.username or "нет"
-    is_new = add_user_if_new(user_id, username)
-    if is_new:
-        await bot.send_message(ADMIN_ID, f"Новый пользователь: {message.from_user.full_name} (ID: {user_id})")
-    await send_main_menu(message, name, user_id)
+    name = message.from_user.first_name
 
-def tarifs_menu():
-    kb = []
-    for name, (days, price) in TARIFS.items():
-        text = f"{name} — {price}₽"
-        if days > 30:
-            monthly = round(price / (days / 30))
-            text += f" ({monthly}₽/мес)"
-        kb.append([InlineKeyboardButton(text=text, callback_data=f"tarif_{name}")])
-    kb.append([InlineKeyboardButton(text="🔙 Назад", callback_data="back_main")])
-    return InlineKeyboardMarkup(inline_keyboard=kb)
+    # Проверяем, есть ли реферальный параметр
+    args = message.text.split()
+    referrer_id = None
+    if len(args) > 1 and args[1].startswith("ref_"):
+        try:
+            referrer_id = int(args[1].split("_")[1])
+            if referrer_id == user_id:
+                referrer_id = None  # сам на себя не реферит
+        except:
+            referrer_id = None
+
+    # Добавляем пользователя, если новый
+    is_new = add_user_if_new(user_id, username)
+
+    # Если это реферал и пользователь действительно новый
+    if is_new and referrer_id:
+        # Даём 3 дня пригласившему
+        await give_referral_bonus(referrer_id, user_id)
+
+        # Можно отправить сообщение пригласившему
+        try:
+            await bot.send_message(
+                referrer_id,
+                "🎉 Новый друг по твоей ссылке! +3 дня к подписке добавлено!"
+            )
+        except:
+            pass  # если заблокировал бота — игнорируем
+
+        # Можно отправить новому пользователю приветствие с рефералом
+        await message.answer(
+            "Добро пожаловать! Ты пришёл по реферальной ссылке — получаешь 3 дня бесплатно! 🎁"
+        )
+
+    # Обычное приветствие
+    await send_main_menu(message, name, user_id)
 
 # Оплата
 @dp.callback_query(F.data == "pay")
@@ -341,48 +420,78 @@ async def install(callback: CallbackQuery):
     
     await callback.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
 
-@dp.callback_query(F.data == "select_device")
+@dp.callback_query(F.data.startswith("select_device_"))
 async def select_device(callback: CallbackQuery):
+    try:
+        _, uuid = callback.data.split("_", 1)
+    except:
+        uuid = None
+
     text = "Выберите свое устройство ниже для получения инструкции:"
-    
+   
     kb = [
-        [InlineKeyboardButton(text="📱Android", callback_data="device_Android")],
-        [InlineKeyboardButton(text="🍎iOS",     callback_data="device_iOS")],
-        [InlineKeyboardButton(text="🖥️Windows", callback_data="device_Windows")],
-        [InlineKeyboardButton(text="💻MacOS",   callback_data="device_MacOS")],
+        [InlineKeyboardButton(text="📱 Android",   callback_data=f"device_Android_{uuid or ''}")],
+        [InlineKeyboardButton(text="🍎 iOS",       callback_data=f"device_iOS_{uuid or ''}")],
+        [InlineKeyboardButton(text="🖥️ Windows",  callback_data=f"device_Windows_{uuid or ''}")],
+        [InlineKeyboardButton(text="💻 MacOS",     callback_data=f"device_MacOS_{uuid or ''}")],
         [InlineKeyboardButton(text="🔙 Главное меню", callback_data="back_main")]
     ]
-    
+   
     await callback.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+    await callback.answer()
 
 @dp.callback_query(F.data.startswith("device_"))
 async def device_instruction(callback: CallbackQuery):
-    platform = callback.data.split("_", 1)[1]  # Android / iOS / Windows / MacOS
-    
-    # Берём первую (самую свежую) активную подписку пользователя
+    try:
+        parts = callback.data.split("_", 2)
+        platform = parts[1]
+        uuid = parts[2] if len(parts) > 2 and parts[2] else None
+    except:
+        platform = "Android"
+        uuid = None
+
     user_id = callback.from_user.id
-    subs = get_user_subscriptions(user_id)
-    if not subs:
-        await callback.message.edit_text("Подписка не найдена. Попробуйте позже или обратитесь в поддержку.")
-        return
-    
-    # Берём первую подписку (можно потом доработать выбор, если подписок много)
-    uuid, days, created_at = subs[0]
-    deeplink = f"{DEEPLINK_BASE}{HIDDIFY_CLIENT_PATH}/{uuid}/"
-    
+
+    if uuid:
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        c.execute(
+            "SELECT uuid, days FROM subscriptions WHERE user_id = ? AND uuid = ? AND status = 'active'",
+            (user_id, uuid)
+        )
+        sub = c.fetchone()
+        conn.close()
+        if sub:
+            selected_uuid = sub[0]
+        else:
+            selected_uuid = None
+    else:
+        selected_uuid = None
+
+    # Если uuid не найден или не передан — берём первую подписку как fallback
+    if not selected_uuid:
+        subs = get_user_subscriptions(user_id)
+        if not subs:
+            await callback.message.edit_text("Подписка не найдена. Обратитесь в поддержку.")
+            return
+        selected_uuid, _, _ = subs[0]
+
+    deeplink = f"{DEEPLINK_BASE}{HIDDIFY_CLIENT_PATH}/{selected_uuid}/"
+
     text = (
-        "✅Скачайте и установите приложение Happ нажав на первую кнопку ниже «🔗Скачать приложение»\n\n"
-        "✅Вставьте свою подписку в приложение нажав на вторую кнопку ниже «🗝️Добавить подписку»\n\n"
-        "⚡Нажмите на большую кнопку в приложении Happ и наслаждайтесь скоростью."
+        "✅ Скачайте и установите приложение Happ нажав на первую кнопку ниже «🔗Скачать приложение»\n\n"
+        "✅ Вставьте свою подписку в приложение нажав на вторую кнопку ниже «🗝️Добавить подписку»\n\n"
+        "⚡ Нажмите на большую кнопку в приложении Happ и наслаждайтесь скоростью."
     )
-    
+   
     kb = [
-        [InlineKeyboardButton(text="🔗Скачать приложение", url=HAPP_LINKS.get(platform, HAPP_LINKS["Android"]))],
-        [InlineKeyboardButton(text="🗝️Добавить подписку", url=deeplink)],
+        [InlineKeyboardButton(text="🔗 Скачать приложение", url=HAPP_LINKS.get(platform, HAPP_LINKS["Android"]))],
+        [InlineKeyboardButton(text="🗝️ Добавить подписку", url=deeplink)],
         [InlineKeyboardButton(text="🔙 Главное меню", callback_data="back_main")]
     ]
-    
+   
     await callback.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+    await callback.answer()
     
         
 # Пригласить друзей

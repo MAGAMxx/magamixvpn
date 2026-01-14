@@ -138,6 +138,34 @@ def create_hiddify_user(days: int, user_id: int):
         logging.error(f"Ошибка API: {e}")
         return None
 
+def update_hiddify_user_days(uuid: str, new_total_days: int) -> bool:
+    url = f"{HIDDIFY_ADMIN_PATH}/api/v2/admin/user/{uuid}/"
+    headers = {
+        "Hiddify-API-Key": API_KEY,
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "package_days": new_total_days
+        # Можно добавить: "mode": "no_reset" если нужно сохранить режим
+    }
+    
+    try:
+        response = requests.patch(url, headers=headers, json=payload, timeout=15)
+        # Или попробуй PUT, если PATCH не сработает: requests.put(...)
+        
+        response.raise_for_status()  # кинет исключение при 4xx/5xx
+        
+        data = response.json()
+        logging.info(f"Успешно обновлено package_days для {uuid}: {data}")
+        return True
+    
+    except requests.exceptions.HTTPError as e:
+        logging.error(f"HTTP ошибка при обновлении {uuid}: {e.response.status_code} - {e.response.text}")
+        return False
+    except Exception as e:
+        logging.error(f"Общая ошибка обновления {uuid}: {e}")
+        return False
+
 
 # Главное меню
 async def send_main_menu(event, user_name, user_id):
@@ -175,15 +203,9 @@ def get_user_subscriptions(user_id: int):
     return subs
 
 async def give_referral_bonus(referrer_id: int, referred_user_id: int):
-    """
-    Добавляет +3 дня рефереру.
-    Если есть активная подписка — продлевает её.
-    Если нет — создаёт новую на 3 дня.
-    """
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
 
-    # Ищем самую свежую активную подписку реферера
     c.execute("""
         SELECT id, uuid, days, created_at 
         FROM subscriptions 
@@ -194,43 +216,38 @@ async def give_referral_bonus(referrer_id: int, referred_user_id: int):
     existing = c.fetchone()
 
     days_to_add = 3
+    success = False
 
     if existing:
-        # Есть активная подписка — продлеваем её
         sub_id, uuid, current_days, created_at = existing
-
-        # Можно просто увеличить days в базе (самый простой способ)
         new_days = current_days + days_to_add
-
-        c.execute("""
-            UPDATE subscriptions 
-            SET days = ? 
-            WHERE id = ?
-        """, (new_days, sub_id))
-
-        # Сообщаем админу (опционально)
-        await bot.send_message(
-            ADMIN_ID,
-            f"Реферал от {referred_user_id} → +{days_to_add} дней пользователю {referrer_id} (продление)"
-        )
-
-    else:
-        # Нет активной — создаём новую на 3 дня
-        deeplink = create_hiddify_user(days_to_add, referrer_id)
-        if deeplink:
-            await bot.send_message(
-                referrer_id,
-                f"🎁 Ты получил 3 дня по реферальной программе!\n\nСсылка: {deeplink}"
-            )
+        
+        # Пытаемся обновить в Hiddify
+        if update_hiddify_user_days(uuid, new_days):
+            # Успех → обновляем БД
+            c.execute("UPDATE subscriptions SET days = ? WHERE id = ?", (new_days, sub_id))
+            success = True
             await bot.send_message(
                 ADMIN_ID,
-                f"Реферал от {referred_user_id} → новая подписка 3 дня для {referrer_id}"
+                f"Реферал от {referred_user_id} → +{days_to_add} дней (продление в Hiddify) для {referrer_id}. Новый total: {new_days}"
             )
         else:
-            await bot.send_message(ADMIN_ID, f"Ошибка создания реф. бонуса для {referrer_id}")
-
+            await bot.send_message(ADMIN_ID, f"❌ Не удалось продлить в Hiddify для {referrer_id} (uuid: {uuid})")
+    else:
+        # Создаём новую — как раньше
+        deeplink = create_hiddify_user(days_to_add, referrer_id)
+        if deeplink:
+            success = True
+            # ... сообщения ...
+    
     conn.commit()
     conn.close()
+    
+    if success:
+        try:
+            await bot.send_message(referrer_id, "🎉 Новый друг! +3 дня добавлено к подписке!")
+        except:
+            pass
 
 # Старт
 @dp.message(Command("start"))

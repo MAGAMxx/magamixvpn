@@ -582,7 +582,16 @@ async def main_menu():
 
 
 async def main():
-    await dp.start_polling(bot)
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s - %(levelname)s - %(message)s"
+    )
+    print("🚀 Бот запущен")
+    await dp.start_polling(
+        bot,
+        allowed_updates=types.default_allowed_updates,
+        drop_pending_updates=True
+    )
 
 if __name__ == "__main__":
     asyncio.run(main())

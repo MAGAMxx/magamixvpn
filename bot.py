@@ -179,7 +179,7 @@ async def start(message: Message):
 
     await send_main_menu(message, name, user_id)
 
-def tarifs_menu()
+def tarifs_menu():
     kb = []
     for name, (days, price) in TARIFS.items():
         text = f"{name} — {price}₽"

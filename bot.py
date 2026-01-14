@@ -6,7 +6,7 @@ from datetime import datetime
 
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, Message
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, Message, LabeledPrice, PreCheckoutQuery
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
@@ -31,6 +31,14 @@ TARIFS = {
     "✨3 мес": (90, 350),
     "✨6 мес": (180, 600),
     "✨12 мес": (365, 1000)
+}
+
+STARS_PRICES = {    # примерные цены в Stars (можно подкорректировать под реальный курс)
+    "✨7 дней": 30,
+    "✨1 мес": 85,
+    "✨3 мес": 200,
+    "✨6 мес": 350,
+    "✨12 мес": 580,
 }
 
 HAPP_LINKS = {
@@ -300,20 +308,116 @@ async def pay(callback: CallbackQuery):
 @dp.callback_query(F.data.startswith("tarif_"))
 async def tarif_chosen(callback: CallbackQuery, state: FSMContext):
     tarif_name = callback.data.split("_", 1)[1]
-    days, price = TARIFS[tarif_name]
-    await state.update_data(tarif=tarif_name, days=days, price=price)
+    days, rub_price = TARIFS[tarif_name]
+    stars_price = STARS_PRICES.get(tarif_name, rub_price // 6)  # fallback если не указали
 
-    text = (
-        f"Последний штрих ⚡\n\n"
-        f"Оплата:\nНомер: 79283376737\nБанк: ОЗОН БАНК\nСумма: {price}₽\n\n"
-        f"Нажми «Я оплатил» и пришли скрин."
+    await state.update_data(
+        tarif=tarif_name,
+        days=days,
+        rub_price=rub_price,
+        stars_price=stars_price
     )
-    kb = [
-        [InlineKeyboardButton(text="✅ Я оплатил", callback_data="paid")],
-        [InlineKeyboardButton(text="🔙 Назад", callback_data="pay")]
-    ]
-    await callback.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
-    await state.set_state(States.waiting_payment_screenshot)
+
+    text = f"Вы выбрали тариф **{tarif_name}** ({days} дней)\n\nВыберите способ оплаты:"
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        #[InlineKeyboardButton(text="💳 Карта / СБП", callback_data=f"pay_card_{tarif_name}")],
+        [InlineKeyboardButton(text=f"⭐ Звёздами ({stars_price} ⭐)", callback_data=f"pay_stars_{tarif_name}")],
+        [InlineKeyboardButton(text="🔙 Назад к тарифам", callback_data="pay")]
+    ])
+
+    await callback.message.edit_text(text, reply_markup=kb, parse_mode="Markdown")
+    await callback.answer()
+
+@dp.callback_query(F.data.startswith("pay_stars_"))
+async def pay_with_stars(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    tarif_name = callback.data.split("_", 2)[2]
+    days = data["days"]
+    stars_amount = data["stars_price"]
+
+    prices = [LabeledPrice(label=f"Подписка {tarif_name}", amount=stars_amount)]
+
+    try:
+        invoice = await bot.send_invoice(
+            chat_id=callback.message.chat.id,
+            title=f"Magam VPN — {tarif_name}",
+            description=f"Доступ к премиум VPN на {days} дней",
+            payload=f"vpn_{callback.from_user.id}_{tarif_name}_{days}",  # уникальный payload
+            provider_token="",  # для Stars оставляем пустым!
+            currency="XTR",
+            prices=prices,
+            need_name=False,
+            need_phone_number=False,
+            need_email=False,
+            need_shipping_address=False,
+            is_flexible=False,
+            reply_markup=None  # Telegram сам покажет кнопку Pay
+        )
+
+        await callback.answer("Счёт выставлен! Оплатите ⭐ звёздами", show_alert=False)
+
+    except Exception as e:
+        logging.error(f"Ошибка отправки Stars invoice: {e}")
+        await callback.message.edit_text("❌ Не удалось создать счёт. Попробуйте позже или выберите другой способ.")
+
+@dp.pre_checkout_query()
+async def pre_checkout_handler(pre_checkout_query: PreCheckoutQuery):
+    # Здесь можно проверить payload, наличие товара и т.д.
+    # Для простоты всегда подтверждаем
+    await bot.answer_pre_checkout_query(
+        pre_checkout_query_id=pre_checkout_query.id,
+        ok=True
+    )
+
+@dp.pre_checkout_query()
+async def pre_checkout_handler(pre_checkout_query: PreCheckoutQuery):
+    # Здесь можно проверить payload, наличие товара и т.д.
+    # Для простоты всегда подтверждаем
+    await bot.answer_pre_checkout_query(
+        pre_checkout_query_id=pre_checkout_query.id,
+        ok=True
+    )
+
+
+# Успешная оплата — САМОЕ ВАЖНОЕ!
+@dp.message(F.successful_payment)
+async def successful_stars_payment(message: types.Message):
+    payment = message.successful_payment
+    user_id = message.from_user.id
+    
+    # Разбираем payload
+    try:
+        _, uid_str, tarif_name, days_str = payment.invoice_payload.split("_")
+        days = int(days_str)
+    except:
+        days = 7  # fallback
+        
+    # Выдаём подписку
+    deeplink = create_hiddify_user(days, user_id)
+    
+    if deeplink:
+        text = (
+            f"🎉 Оплата через ⭐ Stars прошла успешно!\n\n"
+            f"Ваша подписка на **{days} дней** активирована!\n"
+            f"Сумма: {payment.total_amount} ⭐\n\n"
+            f"Перейдите в «Установить VPN» в главном меню"
+        )
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📲 Главное меню", callback_data="back_main")]
+        ])
+        
+        await message.answer(text, reply_markup=kb, parse_mode="Markdown")
+        
+        # Уведомление админу
+        await bot.send_message(
+            ADMIN_ID,
+            f"⭐ НОВАЯ ОПЛАТА Stars!\n"
+            f"Пользователь: {message.from_user.id} (@{message.from_user.username or 'нет'})\n"
+            f"Тариф: {tarif_name} | {days} дней | {payment.total_amount} ⭐"
+        )
+    else:
+        await message.answer("✅ Оплата прошла, но ошибка выдачи доступа. Напишите в поддержку.")
 
 @dp.callback_query(F.data == "paid", States.waiting_payment_screenshot)
 async def waiting_screenshot(callback: CallbackQuery):

@@ -329,7 +329,7 @@ async def install(callback: CallbackQuery):
     
     for uuid, days, created_at in subs:
         fake_code = random.randint(100000, 999999)
-        button_text = f"{fake_code} ({days} дней)"
+        button_text = f"🗝️{fake_code} ({days} дней)"
         
         kb.append([InlineKeyboardButton(
             text=button_text,

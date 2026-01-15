@@ -61,8 +61,6 @@ bot = Bot(token=BOT_TOKEN)
 storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
 
-class States(StatesGroup):
-    waiting_free_check = State()
 
 # База данных
 DB_FILE = "users.db"
@@ -501,10 +499,6 @@ async def successful_stars_payment(message: types.Message):
     else:
         await message.answer("✅ Оплата прошла, но ошибка выдачи доступа. Напишите в поддержку.")
 
-@dp.callback_query(F.data == "paid", States.waiting_payment_screenshot)
-async def waiting_screenshot(callback: CallbackQuery):
-    await callback.message.edit_text("📸 Отправь скриншот перевода. Админ проверит.")
-    # Состояние остаётся для фото
 
 
 

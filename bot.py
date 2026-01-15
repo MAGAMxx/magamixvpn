@@ -35,7 +35,7 @@ CHANNEL_USERNAME = "@MAGAMIX_VPN"
 CHANNEL_LINK = "https://t.me/MAGAMIX_VPN"
 
 TARIFS = {
-    "✨7 дней": (7, 50),
+    "✨7 дней": (7, 10),
     "✨1 мес": (30, 150),
     "✨3 мес": (90, 350),
     "✨6 мес": (180, 600),

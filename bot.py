@@ -10,10 +10,19 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQu
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
+from yookassa import Configuration, Payment
+from yookassa.domain.notification import WebhookNotification
+from uuid import uuid
+from aiohttp import web
+
 
 # ================== НАСТРОЙКИ ==================
-BOT_TOKEN = "8570392401:AAFfowtqYzjxz-PCC-0IVJPx1xl5V03LCXk"
+BOT_TOKEN = "8255308077:AAEenB9nueeR37FQy5zhg0W3gryElnJjcYk"
 ADMIN_ID = 8479289622
+YOOKASSA_SHOP_ID = "1247494"
+YOOKASSA_SECRET_KEY = "live_TgYfc-8htgDHnwfEyTSsQSoZcAgcKDTshD8gMXZSpFU"
+Configuration.account_id = YOOKASSA_SHOP_ID
+Configuration.secret_key = YOOKASSA_SECRET_KEY
 
 HIDDIFY_ADMIN_PATH = "https://vpn.tgflovv.ru/a2NRdl78IHwZBYBReUx"
 HIDDIFY_CLIENT_PATH = "https://vpn.tgflovv.ru/6bqCF1dLYRFoerALhhXu8cn98"
@@ -53,7 +62,6 @@ storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
 
 class States(StatesGroup):
-    waiting_payment_screenshot = State()
     waiting_free_check = State()
 
 # База данных
@@ -308,25 +316,41 @@ async def pay(callback: CallbackQuery):
 @dp.callback_query(F.data.startswith("tarif_"))
 async def tarif_chosen(callback: CallbackQuery, state: FSMContext):
     tarif_name = callback.data.split("_", 1)[1]
+    
+    if tarif_name not in TARIFS:
+        await callback.answer("Такой тариф не найден", show_alert=True)
+        return
+        
     days, rub_price = TARIFS[tarif_name]
-    stars_price = STARS_PRICES.get(tarif_name, rub_price // 6)  # fallback если не указали
-
+    stars_price = STARS_PRICES.get(tarif_name, rub_price // 6)  # запасной вариант
+    
     await state.update_data(
         tarif=tarif_name,
         days=days,
         rub_price=rub_price,
         stars_price=stars_price
     )
-
-    text = f"Вы выбрали тариф **{tarif_name}** ({days} дней)\n\nВыберите способ оплаты:"
-
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        #[InlineKeyboardButton(text="💳 Карта / СБП", callback_data=f"pay_card_{tarif_name}")],
-        [InlineKeyboardButton(text=f"⭐ Звёздами ({stars_price} ⭐)", callback_data=f"pay_stars_{tarif_name}")],
-        [InlineKeyboardButton(text="🔙 Назад к тарифам", callback_data="pay")]
-    ])
-
-    await callback.message.edit_text(text, reply_markup=kb, parse_mode="Markdown")
+    
+    text = (
+        f"Вы выбрали тариф **{tarif_name}** ({days} дней)\n\n"
+        f"Стоимость: **{rub_price} ₽**  (или ~{stars_price} ⭐)\n\n"
+        "Выберите удобный способ оплаты:"
+    )
+    
+    kb = []
+    for method_key, method_title in PAYMENT_METHODS.items():
+        kb.append([InlineKeyboardButton(
+            text=method_title,
+            callback_data=f"pay_{method_key}_{tarif_name}"
+        )])
+    
+    kb.append([InlineKeyboardButton(text="🔙 Назад к тарифам", callback_data="pay")])
+    
+    await callback.message.edit_text(
+        text,
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=kb),
+        parse_mode="Markdown"
+    )
     await callback.answer()
 
 @dp.callback_query(F.data.startswith("pay_stars_"))
@@ -360,6 +384,64 @@ async def pay_with_stars(callback: CallbackQuery, state: FSMContext):
     except Exception as e:
         logging.error(f"Ошибка отправки Stars invoice: {e}")
         await callback.message.edit_text("❌ Не удалось создать счёт. Попробуйте позже или выберите другой способ.")
+
+# ----------------------------------------------------------------------
+#                     ОПЛАТА ЧЕРЕЗ ЮKASSA
+# ----------------------------------------------------------------------
+@dp.callback_query(F.data.startswith("pay_yookassa_"))
+async def pay_yookassa(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    tarif_name = callback.data.split("_", 2)[2]
+    days = data["days"]
+    amount = data["rub_price"]
+    
+    try:
+        payment = Payment.create({
+            "amount": {
+                "value": f"{amount}.00",
+                "currency": "RUB"
+            },
+            "confirmation": {
+                "type": "redirect",
+                "return_url": "https://t.me/MAGAMIX_VPN"  # ← можно поменять
+            },
+            "capture": True,
+            "description": f"Magam VPN — {tarif_name} ({days} дней) | User {callback.from_user.id}",
+            "metadata": {
+                "user_id": str(callback.from_user.id),
+                "tarif": tarif_name,
+                "days": str(days),
+                "source": "telegram_bot"
+            }
+        })
+        
+        payment_url = payment.confirmation.confirmation_url
+        
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="💳 Оплатить сейчас", url=payment_url)],
+            [InlineKeyboardButton(text="🔙 Назад", callback_data="pay")]
+        ])
+        
+        text = (
+            f"Оплата через ЮKassa\n\n"
+            f"Тариф: **{tarif_name}** ({days} дней)\n"
+            f"Сумма: **{amount} ₽**\n\n"
+            "Нажмите кнопку ниже для перехода к оплате 👇"
+        )
+        
+        await callback.message.edit_text(
+            text,
+            reply_markup=kb,
+            parse_mode="Markdown"
+        )
+        
+    except Exception as e:
+        logging.error(f"Ошибка создания платежа ЮKassa: {e}")
+        await callback.message.edit_text("❌ Не удалось создать платёж. Попробуйте позже или напишите в поддержку.")
+    
+    await callback.answer()
+
+
 
 @dp.pre_checkout_query()
 async def pre_checkout_handler(pre_checkout_query: PreCheckoutQuery):
@@ -424,91 +506,8 @@ async def waiting_screenshot(callback: CallbackQuery):
     await callback.message.edit_text("📸 Отправь скриншот перевода. Админ проверит.")
     # Состояние остаётся для фото
 
-@dp.message((F.photo | F.document), States.waiting_payment_screenshot)
-async def get_screenshot(message: Message, state: FSMContext):
-    data = await state.get_data()
-    user = message.from_user
-    
-    # Сообщение пользователю сразу после отправки чека
-    await message.answer(
-        "✅ Ваш чек получен!\n\n"
-        "👨‍💻Перевод находится на проверке у администратора.\n"
-        "🕧Пожалуйста, ожидайте — обычно это занимает от 5 до 30 минут.\n\n"
-        "Как только всё подтвердится, вы получите сообщение с доступом к VPN 🎉"
-    )
-    
-    # Формируем сообщение для админа 
-    text = (
-        f"🔥 НОВАЯ ОПЛАТА!\n"
-        f"Пользователь: {user.full_name} (@{user.username or 'нет'})\n"
-        f"ID: {user.id}\n"
-        f"Тариф: {data['tarif']} ({data['days']} дней, {data['price']}₽)"
-    )
-    
-    kb = [
-        [InlineKeyboardButton(text="✅ Выдать", callback_data=f"approve_{user.id}_{data['days']}")],
-        [InlineKeyboardButton(text="❌ Отклонить", callback_data=f"reject_{user.id}")]
-    ]
-    
-    if message.photo:
-        await bot.send_photo(
-            ADMIN_ID,
-            message.photo[-1].file_id,
-            caption=text,
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=kb)
-        )
-    else:
-        await bot.send_document(
-            ADMIN_ID,
-            message.document.file_id,
-            caption=text,
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=kb)
-        )
 
-    await state.clear()
 
-@dp.callback_query(F.data.startswith("approve_"))
-async def approve(callback: CallbackQuery):
-    _, user_id_str, days_str = callback.data.split("_")
-    user_id = int(user_id_str)
-    days = int(days_str)
-    
-    deeplink = create_hiddify_user(days, user_id)
-    
-    if deeplink:
-        text = (
-            f"✅ Оплата подтверждена!\n\n"
-            f"Ваша подписка на **{days} дней** успешно добавлена 🎉\n\n"
-            f"Подключиться можно в любое время через кнопку\n"
-            f"«📲 Установить VPN» в главном меню"
-        )
-        
-        kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="📲 Перейти в главное меню", callback_data="back_main")]
-        ])
-        
-        await bot.send_message(
-            user_id,
-            text,
-            reply_markup=kb,
-            parse_mode="Markdown"
-        )
-        
-        await callback.answer("Выдано!")
-        
-        await bot.send_message(
-            ADMIN_ID,
-            f"Подписка на {days} дней выдана пользователю {user_id} после оплаты"
-        )
-    else:
-        await bot.send_message(ADMIN_ID, f"❌ Ошибка создания подписки для {user_id}")
-        await callback.answer("Ошибка")
-
-@dp.callback_query(F.data.startswith("reject_"))
-async def reject(callback: CallbackQuery):
-    _, user_id = callback.data.split("_")
-    await bot.send_message(int(user_id), "❌ Оплата не подтверждена. Проверь данные или пиши в поддержку.")
-    await callback.answer("Отклонено")
 
 # Бесплатные 3 дня
 @dp.callback_query(F.data == "free_3days")
@@ -679,6 +678,46 @@ async def referral(callback: CallbackQuery):
 async def back_main(callback: CallbackQuery):
     await send_main_menu(callback, callback.from_user.first_name, callback.from_user.id)
 
+async def yookassa_webhook(request):
+    try:
+        event = await request.json()
+        if event.get('event') == 'payment.succeeded':
+            payment = event['object']
+            user_id = int(payment['metadata']['user_id'])
+            days = int(payment['metadata']['days'])
+            tarif = payment['metadata'].get('tarif', 'неизвестно')
+            amount = payment['amount']['value']
+
+            deeplink = create_hiddify_user(days, user_id)
+            if deeplink:
+                await bot.send_message(
+                    user_id,
+                    f"🎉 Оплата через ЮKassa прошла успешно!\n\n"
+                    f"Тариф: **{tarif}** — {days} дней\n"
+                    f"Сумма: {amount} ₽\n\n"
+                    "Перейди в меню → «Установить VPN»"
+                )
+                await bot.send_message(
+                    ADMIN_ID,
+                    f"ЮKassa успех: пользователь {user_id} | {tarif} | {days} дней | {amount}₽"
+                )
+            else:
+                await bot.send_message(ADMIN_ID, f"ЮKassa успех, но ошибка выдачи подписки: {user_id}")
+
+        return web.Response(status=200)
+    except Exception as e:
+        logging.error(f"Webhook ошибка: {e}")
+        return web.Response(status=200)
+
+async def start_webhook_server():
+    app = web.Application()
+    app.router.add_post('/bot-yookassa-webhook', yookassa_webhook)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, '0.0.0.0', 8081)
+    await site.start()
+    print("Webhook сервер запущен на порту 8081")
+
 async def main_menu():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="Главное меню", callback_data="back_main")]
@@ -688,6 +727,7 @@ async def main_menu():
 async def main():
     logging.basicConfig(level=logging.INFO)
     print("🚀 Бот запущен")
+    await start_webhook_server()
     await dp.start_polling(
         bot,
         drop_pending_updates=True

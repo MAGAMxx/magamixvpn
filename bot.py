@@ -469,16 +469,6 @@ async def pay_yookassa(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-
-@dp.pre_checkout_query()
-async def pre_checkout_handler(pre_checkout_query: PreCheckoutQuery):
-    # Здесь можно проверить payload, наличие товара и т.д.
-    # Для простоты всегда подтверждаем
-    await bot.answer_pre_checkout_query(
-        pre_checkout_query_id=pre_checkout_query.id,
-        ok=True
-    )
-
 @dp.pre_checkout_query()
 async def pre_checkout_handler(pre_checkout_query: PreCheckoutQuery):
     # Здесь можно проверить payload, наличие товара и т.д.

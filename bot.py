@@ -404,7 +404,7 @@ async def pay_yookassa(callback: CallbackQuery, state: FSMContext):
     tarif_name = callback.data.split("_", 2)[2]
     days = data["days"]
     amount = data["rub_price"]
-    
+   
     try:
         payment = Payment.create({
             "amount": {
@@ -413,42 +413,59 @@ async def pay_yookassa(callback: CallbackQuery, state: FSMContext):
             },
             "confirmation": {
                 "type": "redirect",
-                "return_url": "https://t.me/MAGAMIX_VPN"  # ← можно поменять
+                "return_url": "https://t.me/MAGAMIX_VPN"
             },
             "capture": True,
-            "description": f"Magam VPN — {tarif_name} ({days} дней) | User {callback.from_user.id}",
+            "description": f"Magam VPN — {tarif_name} | User {callback.from_user.id}",
             "metadata": {
                 "user_id": str(callback.from_user.id),
                 "tarif": tarif_name,
-                "days": str(days),
                 "source": "telegram_bot"
+            },
+            "receipt": {
+                "customer": {
+                    "email": "mohammadakubov@gmail.com"
+                },
+                "items": [
+                    {
+                        "description": f"Подписка Magam VPN — {tarif_name}",
+                        "quantity": 1,
+                        "amount": {
+                            "value": f"{amount}.00",
+                            "currency": "RUB"
+                        },
+                        "vat_code": 1,  # или 3, если НДС 0%
+                        "payment_mode": "full_prepayment",
+                        "payment_subject": "service"
+                    }
+                ]
             }
         })
-        
+       
         payment_url = payment.confirmation.confirmation_url
-        
+       
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="💳 Оплатить сейчас", url=payment_url)],
             [InlineKeyboardButton(text="🔙 Назад", callback_data="pay")]
         ])
-        
+       
         text = (
             f"Оплата через ЮKassa\n\n"
-            f"Тариф: **{tarif_name}** ({days} дней)\n"
+            f"Тариф: **{tarif_name}**\n"  # без дней, как ты хотел
             f"Сумма: **{amount} ₽**\n\n"
             "Нажмите кнопку ниже для перехода к оплате 👇"
         )
-        
+       
         await callback.message.edit_text(
             text,
             reply_markup=kb,
             parse_mode="Markdown"
         )
-        
+       
     except Exception as e:
         logging.error(f"Ошибка создания платежа ЮKassa: {e}")
         await callback.message.edit_text("❌ Не удалось создать платёж. Попробуйте позже или напишите в поддержку.")
-    
+   
     await callback.answer()
 
 

@@ -275,6 +275,34 @@ async def give_referral_bonus(referrer_id: int, referred_user_id: int):
     
     conn.commit()
     conn.close()
+
+def extend_or_create_subscription(user_id: int, days_to_add: int) -> str | None:
+    """
+    Возвращает deeplink после продления или создания подписки
+    """
+    # Берём все активные подписки пользователя
+    subs = get_user_subscriptions(user_id)
+    
+    if subs:
+        # Есть подписка → берём самую новую (первую в списке)
+        uuid, current_days, _ = subs[0]
+        
+        new_days = current_days + days_to_add
+        
+        # Пытаемся обновить в Hiddify
+        if update_hiddify_user_days(uuid, new_days):
+            # Если получилось → обновляем в базе
+            conn = sqlite3.connect(DB_FILE)
+            c = conn.cursor()
+            c.execute("UPDATE subscriptions SET days = ? WHERE uuid = ?", (new_days, uuid))
+            conn.commit()
+            conn.close()
+            
+            return f"{DEEPLINK_BASE}{HIDDIFY_CLIENT_PATH}/{uuid}/"
+        else:
+            return None
+    else:
+        return create_hiddify_user(days_to_add, user_id)
     
 
 # Старт
@@ -420,6 +448,7 @@ async def pay_yookassa(callback: CallbackQuery, state: FSMContext):
             "metadata": {
                 "user_id": str(callback.from_user.id),
                 "tarif": tarif_name,
+                "days": str(days),
                 "source": "telegram_bot"
             },
             "receipt": {
@@ -493,7 +522,7 @@ async def successful_stars_payment(message: types.Message):
         days = 7  # fallback
         
     # Выдаём подписку
-    deeplink = create_hiddify_user(days, user_id)
+    deeplink = extend_or_create_subscription(user_id, days)
     
     if deeplink:
         text = (
@@ -714,7 +743,7 @@ async def checkpay_handler(message: Message):
             tarif = payment.metadata.get("tarif", "неизвестно")
             amount = payment.amount.value
 
-            deeplink = create_hiddify_user(days, user_id)
+            deeplink = extend_or_create_subscription(user_id, days)
             if deeplink:
                 await bot.send_message(
                     user_id,
@@ -747,7 +776,7 @@ async def yookassa_webhook(request):
             tarif = payment['metadata'].get('tarif', 'неизвестно')
             amount = payment['amount']['value']
 
-            deeplink = create_hiddify_user(days, user_id)
+            deeplink = extend_or_create_subscription(user_id, days)
             if deeplink:
                 await bot.send_message(
                     user_id,

@@ -713,37 +713,38 @@ async def checkpay_handler(message: Message):
         return
 
     payment_id = args[1]
-
     try:
-    payment = Payment.find_one(payment_id)
-    status = payment.status
+        payment = Payment.find_one(payment_id)
+        status = payment.status
+        await message.answer(f"Статус платежа {payment_id}: **{status}**")
 
-    await message.answer(f"Статус платежа {payment_id}: **{status}**")
+        if status == "succeeded":
+            user_id = int(payment.metadata["user_id"])
+            days = int(payment.metadata.get("days", 7))  # ← fallback 7 дней
+            tarif = payment.metadata.get("tarif", "неизвестно")
+            amount = payment.amount.value
 
-    if status == "succeeded":
-        user_id = int(payment.metadata["user_id"])
-        days = int(payment.metadata.get("days", 7))  # ← fallback 7 дней, если нет в метаданных
-        tarif = payment.metadata.get("tarif", "неизвестно")
-        amount = payment.amount.value
+            deeplink = create_hiddify_user(days, user_id)
+            if deeplink:
+                await bot.send_message(
+                    user_id,
+                    f"🎉 Оплата прошла успешно! (ручная проверка)\n\n"
+                    f"Тариф: **{tarif}** — {days} дней\n"
+                    f"Сумма: {amount} ₽\n\n"
+                    "Перейди в меню → «Установить VPN»"
+                )
+                await message.answer(f"Успех! Подписка выдана пользователю {user_id} на {days} дней")
+            else:
+                await message.answer(f"Платёж успешен, но ошибка выдачи подписки для {user_id}")
 
-        deeplink = create_hiddify_user(days, user_id)
-        if deeplink:
-            await bot.send_message(
-                user_id,
-                f"🎉 Оплата прошла успешно! (ручная проверка)\n\n"
-                f"Тариф: **{tarif}** — {days} дней\n"
-                f"Сумма: {amount} ₽\n\n"
-                "Перейди в меню → «Установить VPN»"
-            )
-            await message.answer(f"Успех! Подписка выдана пользователю {user_id} на {days} дней")
+        elif status == "pending":
+            await message.answer("Платёж ещё в обработке (pending)")
         else:
-            await message.answer(f"Платёж успешен, но ошибка выдачи подписки для {user_id}")
-    elif status == "pending":
-        await message.answer("Платёж ещё в обработке (pending)")
-    else:
-        await message.answer(f"Платёж не успешен (статус: {status})")
-except Exception as e:
-    await message.answer(f"Ошибка проверки платежа: {str(e)}")
+            await message.answer(f"Платёж не успешен (статус: {status})")
+
+    except Exception as e:
+        await message.answer(f"Ошибка проверки платежа: {str(e)}")
+
 
 async def yookassa_webhook(request):
     try:

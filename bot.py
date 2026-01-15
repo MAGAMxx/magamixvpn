@@ -12,7 +12,7 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 from yookassa import Configuration, Payment
 from yookassa.domain.notification import WebhookNotification
-from uuid import uuid
+from uuid import uuid4
 from aiohttp import web
 
 

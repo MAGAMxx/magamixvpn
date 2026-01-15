@@ -61,6 +61,8 @@ bot = Bot(token=BOT_TOKEN)
 storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
 
+class States(StatesGroup):
+    waiting_free_check = State()
 
 # База данных
 DB_FILE = "users.db"

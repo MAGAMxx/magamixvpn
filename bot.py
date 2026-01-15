@@ -57,6 +57,11 @@ HAPP_LINKS = {
     "MacOS": "https://apps.apple.com/ru/app/happ-proxy-utility-plus/id6746188973"
 }
 
+PAYMENT_METHODS = {
+    "stars": "⭐ Оплата звёздами Telegram",
+    "yookassa": "💳 Карта · СБП · ЮMoney"
+}
+
 bot = Bot(token=BOT_TOKEN)
 storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
@@ -332,15 +337,20 @@ async def tarif_chosen(callback: CallbackQuery, state: FSMContext):
     )
     
     text = (
-        f"Вы выбрали тариф **{tarif_name}** ({days} дней)\n\n"
-        f"Стоимость: **{rub_price} ₽**  (или ~{stars_price} ⭐)\n\n"
+        f"Вы выбрали тариф **{tarif_name}** \n\n"
+        f"Стоимость: **{rub_price} ₽**\n\n"
         "Выберите удобный способ оплаты:"
     )
     
     kb = []
     for method_key, method_title in PAYMENT_METHODS.items():
+        if method_key == "stars":
+            button_text = f"Оплата звёздами ({stars_price})"
+        else:
+            button_text = method_title
+            
         kb.append([InlineKeyboardButton(
-            text=method_title,
+            text=button_text,
             callback_data=f"pay_{method_key}_{tarif_name}"
         )])
     

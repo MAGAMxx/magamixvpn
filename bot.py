@@ -4,8 +4,8 @@ import sqlite3
 import requests
 from datetime import datetime
 
-from aiogram import Bot, Dispatcher, types, F
-from aiogram.filters import Command
+from aiogram import Bot, Dispatcher, types, F, Router
+from aiogram.filters import Command, UserFilter
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, Message, LabeledPrice, PreCheckoutQuery
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -62,12 +62,18 @@ PAYMENT_METHODS = {
     "yookassa": "💳 Карта · СБП · ЮMoney"
 }
 
+admin_router = Router()
+admin_router.message.filter(UserFilter(user_id=ADMIN_ID))
+admin_router.callback_query.filter(UserFilter(user_id=ADMIN_ID))
+
 bot = Bot(token=BOT_TOKEN)
 storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
+dp.include_router(admin_router)
 
 class States(StatesGroup):
     waiting_free_check = State()
+
 
 # База данных
 DB_FILE = "users.db"
@@ -763,6 +769,241 @@ async def checkpay_handler(message: Message):
 
     except Exception as e:
         await message.answer(f"Ошибка проверки платежа: {str(e)}")
+
+# ================== АДМИН-ПАНЕЛЬ ==================
+class AdminStates(StatesGroup):
+    waiting_for_user_id_or_username = State()
+    waiting_for_days = State()
+    waiting_for_broadcast_text = State()
+
+# Вспомогательная функция для кнопки "Назад в админку"
+def admin_back_kb():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton("🔙 Назад в админ-панель", callback_data="admin_back")]
+    ])
+
+@admin_router.message(Command("admin"))
+async def admin_panel(message: Message):
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton("📊 Статистика", callback_data="admin_stats")],
+        [InlineKeyboardButton("➕ Добавить дни пользователю", callback_data="admin_add_days")],
+        [InlineKeyboardButton("📢 Рассылка всем", callback_data="admin_broadcast")],
+        [InlineKeyboardButton("❌ Закрыть", callback_data="admin_close")]
+    ])
+    await message.answer("👑 Админ-панель", reply_markup=kb)
+
+@admin_router.callback_query(F.data == "admin_back")
+async def admin_back(callback: CallbackQuery):
+    await admin_panel(callback.message)
+    await callback.answer()
+
+@admin_router.callback_query(F.data == "admin_close")
+async def admin_close(callback: CallbackQuery):
+    await callback.message.delete()
+    await callback.answer("Панель закрыта")
+
+# 1. Статистика
+@admin_router.callback_query(F.data == "admin_stats")
+async def admin_stats(callback: CallbackQuery):
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    
+    c.execute("SELECT COUNT(*) FROM users")
+    total_users = c.fetchone()[0]
+    
+    c.execute("SELECT COUNT(*) FROM subscriptions WHERE status = 'active'")
+    active_subs = c.fetchone()[0]
+    
+    c.execute("SELECT COUNT(DISTINCT user_id) FROM subscriptions")
+    users_with_subs = c.fetchone()[0]
+    
+    text = (
+        f"📊 Статистика на {datetime.now().strftime('%Y-%m-%d %H:%M')}:\n\n"
+        f"Всего пользователей: **{total_users}**\n"
+        f"Пользователей с подпиской: **{users_with_subs}**\n"
+        f"Активных подписок: **{active_subs}**"
+    )
+    
+    await callback.message.edit_text(text, reply_markup=admin_back_kb(), parse_mode="Markdown")
+    conn.close()
+    await callback.answer()
+
+# 2. Добавить дни (начало)
+@admin_router.callback_query(F.data == "admin_add_days")
+async def admin_add_days_start(callback: CallbackQuery, state: FSMContext):
+    await callback.message.edit_text(
+        "Введите user_id или @username пользователя:",
+        reply_markup=admin_back_kb()
+    )
+    await state.set_state(AdminStates.waiting_for_user_id_or_username)
+    await callback.answer()
+
+@admin_router.message(AdminStates.waiting_for_user_id_or_username)
+async def process_user_identifier(message: Message, state: FSMContext):
+    text = message.text.strip()
+    
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    
+    user_id = None
+    
+    if text.startswith('@'):
+        username = text[1:]
+        c.execute("SELECT user_id FROM users WHERE username = ?", (username,))
+        result = c.fetchone()
+        if result:
+            user_id = result[0]
+    else:
+        try:
+            user_id = int(text)
+            c.execute("SELECT user_id FROM users WHERE user_id = ?", (user_id,))
+            if c.fetchone():
+                pass  # ок
+            else:
+                user_id = None
+        except ValueError:
+            user_id = None
+    
+    conn.close()
+    
+    if user_id:
+        await state.update_data(target_user_id=user_id)
+        await message.answer(
+            f"Пользователь найден (ID: {user_id})\n\nВведите количество дней для добавления:",
+            reply_markup=admin_back_kb()
+        )
+        await state.set_state(AdminStates.waiting_for_days)
+    else:
+        await message.answer("Пользователь не найден. Попробуйте снова:", reply_markup=admin_back_kb())
+
+# Завершение добавления дней
+@admin_router.message(AdminStates.waiting_for_days)
+async def process_days_to_add(message: Message, state: FSMContext):
+    try:
+        days = int(message.text.strip())
+        if days <= 0:
+            raise ValueError
+    except ValueError:
+        await message.answer("Введите положительное число дней:", reply_markup=admin_back_kb())
+        return
+    
+    data = await state.get_data()
+    user_id = data['target_user_id']
+    
+    deeplink = extend_or_create_subscription(user_id, days)
+    
+    if deeplink:
+        await bot.send_message(
+            user_id,
+            f"Админ добавил вам **+{days} дней** к подписке! 🎁\n\n"
+            "Проверьте в меню → «Установить VPN»"
+        )
+        await message.answer(
+            f"Успех! Добавлено {days} дней пользователю {user_id}\n\n"
+            f"Ссылка (на всякий): {deeplink}",
+            reply_markup=admin_back_kb(),
+            parse_mode="Markdown"
+        )
+        await bot.send_message(
+            ADMIN_ID,
+            f"[Админ] Добавлено {days} дней пользователю {user_id}"
+        )
+    else:
+        await message.answer("Ошибка при добавлении дней. Проверьте логи.")
+    
+    await state.clear()
+
+Python# 3. Рассылка всем пользователям
+@admin_router.callback_query(F.data == "admin_broadcast")
+async def admin_broadcast_start(callback: CallbackQuery, state: FSMContext):
+    await callback.message.edit_text(
+        "Введите текст сообщения для рассылки (можно с Markdown, эмодзи).\n\n"
+        "После отправки — подтвердите рассылку.",
+        reply_markup=admin_back_kb()
+    )
+    await state.set_state(AdminStates.waiting_for_broadcast_text)
+    await callback.answer()
+
+@admin_router.message(AdminStates.waiting_for_broadcast_text)
+async def process_broadcast_text(message: Message, state: FSMContext):
+    text = message.text.strip()
+    
+    if not text:
+        await message.answer("Текст не может быть пустым. Введите сообщение:", reply_markup=admin_back_kb())
+        return
+    
+    await state.update_data(broadcast_text=text)
+    
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton("✅ Отправить всем", callback_data="confirm_broadcast")],
+        [InlineKeyboardButton("🔄 Изменить текст", callback_data="admin_broadcast")],
+        [InlineKeyboardButton("🔙 Назад", callback_data="admin_back")]
+    ])
+    
+    await message.answer(
+        f"Предпросмотр рассылки:\n\n{text}\n\n"
+        f"Отправить это сообщение всем пользователям?",
+        reply_markup=kb,
+        parse_mode="Markdown"
+    )
+    await state.set_state(AdminStates.waiting_for_broadcast_text)
+
+@admin_router.callback_query(F.data == "confirm_broadcast")
+async def confirm_broadcast(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    broadcast_text = data.get('broadcast_text')
+    
+    if not broadcast_text:
+        await callback.message.edit_text("Ошибка: текст рассылки не найден. Начните заново.", reply_markup=admin_back_kb())
+        await state.clear()
+        await callback.answer()
+        return
+    
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("SELECT user_id FROM users")
+    users = c.fetchall()
+    conn.close()
+    
+    total = len(users)
+    success = 0
+    failed = 0
+    
+    await callback.message.edit_text(
+        f"Рассылка запущена...\n\nОтправлено: 0/{total}",
+        reply_markup=admin_back_kb()
+    )
+    
+    for i, (user_id,) in enumerate(users, 1):
+        try:
+            await bot.send_message(user_id, broadcast_text, parse_mode="Markdown")
+            success += 1
+            await asyncio.sleep(0.05)
+        except Exception as e:
+            logging.error(f"Ошибка отправки юзеру {user_id}: {e}")
+            failed += 1
+        
+        # Обновляем сообщение каждые 20 отправок (чтобы не спамить редактированиями)
+        if i % 20 == 0 or i == total:
+            await callback.message.edit_text(
+                f"Рассылка запущена...\n\n"
+                f"Отправлено: {success}/{total} (успешно)\n"
+                f"Ошибок: {failed}",
+                reply_markup=admin_back_kb()
+            )
+    
+    final_text = (
+        f"Рассылка завершена!\n\n"
+        f"Всего пользователей: {total}\n"
+        f"Успешно отправлено: {success}\n"
+        f"Не удалось отправить: {failed}\n\n"
+        f"Текст рассылки:\n{broadcast_text}"
+    )
+    
+    await callback.message.edit_text(final_text, reply_markup=admin_back_kb(), parse_mode="Markdown")
+    await bot.send_message(ADMIN_ID, f"Рассылка завершена: {success}/{total}")
+    await state.clear()
+    await callback.answer("Рассылка завершена!")
 
 
 async def yookassa_webhook(request):

@@ -701,9 +701,54 @@ async def referral(callback: CallbackQuery):
 async def back_main(callback: CallbackQuery):
     await send_main_menu(callback, callback.from_user.first_name, callback.from_user.id)
 
+@dp.message(Command("checkpay"))
+async def checkpay_handler(message: Message):
+    if message.from_user.id != ADMIN_ID:
+        await message.answer("Только админ может использовать эту команду")
+        return
+
+    args = message.text.split()
+    if len(args) < 2:
+        await message.answer("Использование: /checkpay <payment_id>\nПример: /checkpay 30faf05a-000f-5001-8000-1b73bbd53011")
+        return
+
+    payment_id = args[1]
+
+    try:
+        payment = Payment.find_one(payment_id)
+        status = payment.status
+
+        await message.answer(f"Статус платежа {payment_id}: **{status}**")
+
+        if status == "succeeded":
+            user_id = int(payment.metadata["user_id"])
+            days = int(payment.metadata["days"])
+            tarif = payment.metadata.get("tarif", "неизвестно")
+            amount = payment.amount.value
+
+            deeplink = create_hiddify_user(days, user_id)
+            if deeplink:
+                await bot.send_message(
+                    user_id,
+                    f"🎉 Оплата прошла успешно! (ручная проверка)\n\n"
+                    f"Тариф: **{tarif}** — {days} дней\n"
+                    f"Сумма: {amount} ₽\n\n"
+                    "Перейди в меню → «Установить VPN»"
+                )
+                await message.answer(f"Успех! Подписка выдана пользователю {user_id}")
+            else:
+                await message.answer(f"Платёж успешен, но ошибка выдачи подписки для {user_id}")
+        elif status == "pending":
+            await message.answer("Платёж ещё в обработке (pending)")
+        else:
+            await message.answer(f"Платёж не успешен (статус: {status})")
+    except Exception as e:
+        await message.answer(f"Ошибка проверки платежа: {str(e)}")
+
 async def yookassa_webhook(request):
     try:
         event = await request.json()
+        logging.info(f"Получен webhook от ЮKassa: {event}")
         if event.get('event') == 'payment.succeeded':
             payment = event['object']
             user_id = int(payment['metadata']['user_id'])
@@ -716,7 +761,7 @@ async def yookassa_webhook(request):
                 await bot.send_message(
                     user_id,
                     f"🎉 Оплата через ЮKassa прошла успешно!\n\n"
-                    f"Тариф: **{tarif}** — {days} дней\n"
+                    f"Тариф: **{tarif}** \n"
                     f"Сумма: {amount} ₽\n\n"
                     "Перейди в меню → «Установить VPN»"
                 )

@@ -24,10 +24,16 @@ YOOKASSA_SECRET_KEY = "live_TgYfc-8htgDHnwfEyTSsQSoZcAgcKDTshD8gMXZSpFU"
 Configuration.account_id = YOOKASSA_SHOP_ID
 Configuration.secret_key = YOOKASSA_SECRET_KEY
 
-HIDDIFY_ADMIN_PATH = "https://vpn.tgflovv.ru/a2NRdl78IHwZBYBReUx"
-HIDDIFY_CLIENT_PATH = "https://vpn.tgflovv.ru/6bqCF1dLYRFoerALhhXu8cn98"
 
-API_KEY = "245320ca-f07d-401b-9f43-000735d93085"
+
+# Нидерланды (основная панель)
+HIDDIFY_ADMIN_PATH_NL = "https://vpn.tgflovv.ru/a2NRdl78IHwZBYBReUx"
+HIDDIFY_CLIENT_PATH_NL = "https://vpn.tgflovv.ru/6bqCF1dLYRFoerALhhXu8cn98"
+API_KEY_NL = "245320ca-f07d-401b-9f43-000735d93085"
+# Германия (вторая панель)
+HIDDIFY_ADMIN_PATH_DE = "https://de.vpn.tgflovv.ru/PD6KuWi6xGGguNRRz3v"  # замени на реальный
+HIDDIFY_CLIENT_PATH_DE = "https://de.vpn.tgflovv.ru/nm4cYxIzEFEwvbnvo2bpaChEUgYIv8"
+API_KEY_DE = "cc90cb5a-2a17-4ec6-ac90-6c92f8bdce1c"  # если отличается
 
 DEEPLINK_BASE = "https://deeplink.website/link?url_ha="
 
@@ -133,65 +139,7 @@ def mark_got_free(user_id: int):
     conn.commit()
     conn.close()
 
-# Создание пользователя в Hiddify
-def create_hiddify_user(days: int, user_id: int):
-    url = f"{HIDDIFY_ADMIN_PATH}/api/v2/admin/user/"
-    headers = {"Hiddify-API-Key": API_KEY, "Content-Type": "application/json"}
-    payload = {
-        "name": "",
-        "package_days": days,
-        "usage_limit_GB": 150,
-        "mode": "no_reset"
-    }
-    try:
-        response = requests.post(url, headers=headers, json=payload, timeout=15)
-        response.raise_for_status()
-        data = response.json()
-        uuid = data.get("uuid")
-        if uuid:
-            # Сохраняем в БД
-            conn = sqlite3.connect(DB_FILE)
-            c = conn.cursor()
-            created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            c.execute("INSERT INTO subscriptions (user_id, uuid, days, created_at, status) VALUES (?, ?, ?, ?, ?)",
-                      (user_id, uuid, days, created_at, "active"))
-            conn.commit()
-            conn.close()
 
-            profile_link = f"{HIDDIFY_CLIENT_PATH}/{uuid}/"
-            return f"{DEEPLINK_BASE}{profile_link}"
-        return None
-    except Exception as e:
-        logging.error(f"Ошибка API: {e}")
-        return None
-
-def update_hiddify_user_days(uuid: str, new_total_days: int) -> bool:
-    url = f"{HIDDIFY_ADMIN_PATH}/api/v2/admin/user/{uuid}/"
-    headers = {
-        "Hiddify-API-Key": API_KEY,
-        "Content-Type": "application/json"
-    }
-    payload = {
-        "package_days": new_total_days
-        # Можно добавить: "mode": "no_reset" если нужно сохранить режим
-    }
-    
-    try:
-        response = requests.patch(url, headers=headers, json=payload, timeout=15)
-        # Или попробуй PUT, если PATCH не сработает: requests.put(...)
-        
-        response.raise_for_status()  # кинет исключение при 4xx/5xx
-        
-        data = response.json()
-        logging.info(f"Успешно обновлено package_days для {uuid}: {data}")
-        return True
-    
-    except requests.exceptions.HTTPError as e:
-        logging.error(f"HTTP ошибка при обновлении {uuid}: {e.response.status_code} - {e.response.text}")
-        return False
-    except Exception as e:
-        logging.error(f"Общая ошибка обновления {uuid}: {e}")
-        return False
 
 def tarifs_menu():
     kb = []
@@ -205,6 +153,70 @@ def tarifs_menu():
     kb.append([InlineKeyboardButton(text="🔙 Назад", callback_data="back_main")])
     
     return InlineKeyboardMarkup(inline_keyboard=kb)
+
+def create_or_extend_both(days: int, user_id: int, existing_uuid: str = None) -> dict | None:
+    """
+    Создаёт или продлевает подписку на обоих серверах с одним UUID.
+    Возвращает {'nl': deeplink_nl, 'de': deeplink_de, 'uuid': uuid}
+    """
+    uuid = existing_uuid
+
+    # Если нет UUID — создаём на NL (основной сервер)
+    if not uuid:
+        url_nl = f"{HIDDIFY_ADMIN_PATH_NL}/api/v2/admin/user/"
+        headers_nl = {"Hiddify-API-Key": API_KEY_NL, "Content-Type": "application/json"}
+        payload = {
+            "name": "",
+            "package_days": days,
+            "usage_limit_GB": 150,
+            "mode": "no_reset"
+        }
+        try:
+            r = requests.post(url_nl, headers=headers_nl, json=payload, timeout=15)
+            r.raise_for_status()
+            uuid = r.json().get("uuid")
+            if not uuid:
+                return None
+        except Exception as e:
+            logging.error(f"Ошибка создания на NL: {e}")
+            return None
+
+    # Создаём/продлеваем на DE с тем же UUID
+    url_de = f"{HIDDIFY_ADMIN_PATH_DE}/api/v2/admin/user/{uuid}/" if uuid else f"{HIDDIFY_ADMIN_PATH_DE}/api/v2/admin/user/"
+    headers_de = {"Hiddify-API-Key": API_KEY_DE, "Content-Type": "application/json"}
+
+    payload_de = {
+        "package_days": days,
+        "mode": "no_reset"
+    }
+    if not existing_uuid:  # новый пользователь — явно указываем UUID
+        payload_de["uuid"] = uuid
+
+    try:
+        if existing_uuid:
+            r_de = requests.patch(url_de, headers=headers_de, json=payload_de, timeout=15)
+        else:
+            r_de = requests.post(url_de, headers=headers_de, json=payload_de, timeout=15)
+        r_de.raise_for_status()
+    except Exception as e:
+        logging.error(f"Ошибка на DE (uuid {uuid}): {e}")
+        # Продолжаем работу, даже если DE упал
+
+    # Сохраняем в БД (если новая подписка)
+    if not existing_uuid:
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        c.execute("INSERT INTO subscriptions (user_id, uuid, days, created_at, status) VALUES (?, ?, ?, ?, ?)",
+                  (user_id, uuid, days, created_at, "active"))
+        conn.commit()
+        conn.close()
+
+    return {
+        "nl": f"{DEEPLINK_BASE}{HIDDIFY_CLIENT_PATH_NL}/{uuid}/",
+        "de": f"{DEEPLINK_BASE}{HIDDIFY_CLIENT_PATH_DE}/{uuid}/",
+        "uuid": uuid
+    }
 
 
 # Главное меню
@@ -263,52 +275,39 @@ async def give_referral_bonus(referrer_id: int, referred_user_id: int):
         new_days = current_days + days_to_add
         
         # Пытаемся обновить в Hiddify
-        if update_hiddify_user_days(uuid, new_days):
-            # Успех → обновляем БД
-            c.execute("UPDATE subscriptions SET days = ? WHERE id = ?", (new_days, sub_id))
-            success = True
-            await bot.send_message(
-                ADMIN_ID,
-                f"Реферал от {referred_user_id} → +{days_to_add} дней (продление в Hiddify) для {referrer_id}. Новый total: {new_days}"
-            )
-        else:
-            await bot.send_message(ADMIN_ID, f"❌ Не удалось продлить в Hiddify для {referrer_id} (uuid: {uuid})")
+        new_days = current_days + days_to_add
+                result = create_or_extend_both(new_days, referrer_id, existing_uuid=uuid)
+                if result:
+                    c.execute("UPDATE subscriptions SET days = ? WHERE id = ?", (new_days, sub_id))
+                    success = True
+                    await bot.send_message(
+                        ADMIN_ID,
+                        f"Реферал от {referred_user_id} → +{days_to_add} дней на обоих серверах для {referrer_id}. Новый total: {new_days}"
+                    )
+                else:
+                    await bot.send_message(ADMIN_ID, f"❌ Не удалось продлить на серверах для {referrer_id} (uuid: {uuid})")
     else:
         # Создаём новую — как раньше
-        deeplink = create_hiddify_user(days_to_add, referrer_id)
-        if deeplink:
+        result = create_or_extend_both(days_to_add, referrer_id)
+        if result:
             success = True
     
     conn.commit()
     conn.close()
 
-def extend_or_create_subscription(user_id: int, days_to_add: int) -> str | None:
-    """
-    Возвращает deeplink после продления или создания подписки
-    """
-    # Берём все активные подписки пользователя
+def extend_or_create_subscription(user_id: int, days_to_add: int) -> dict | None:
     subs = get_user_subscriptions(user_id)
     
     if subs:
-        # Есть подписка → берём самую новую (первую в списке)
-        uuid, current_days, _ = subs[0]
-        
+        # Продлеваем существующую
+        uuid, current_days, _ = subs[0]  # берём первую активную
         new_days = current_days + days_to_add
-        
-        # Пытаемся обновить в Hiddify
-        if update_hiddify_user_days(uuid, new_days):
-            # Если получилось → обновляем в базе
-            conn = sqlite3.connect(DB_FILE)
-            c = conn.cursor()
-            c.execute("UPDATE subscriptions SET days = ? WHERE uuid = ?", (new_days, uuid))
-            conn.commit()
-            conn.close()
-            
-            return f"{DEEPLINK_BASE}{HIDDIFY_CLIENT_PATH}/{uuid}/"
-        else:
-            return None
+        result = create_or_extend_both(new_days, user_id, existing_uuid=uuid)
     else:
-        return create_hiddify_user(days_to_add, user_id)
+        # Создаём новую
+        result = create_or_extend_both(days_to_add, user_id)
+    
+    return result
     
 
 # Старт
@@ -528,14 +527,14 @@ async def successful_stars_payment(message: types.Message):
         days = 7  # fallback
         
     # Выдаём подписку
-    deeplink = extend_or_create_subscription(user_id, days)
+    result = extend_or_create_subscription(user_id, days)
     
-    if deeplink:
+    if result:
         text = (
             f"🎉 Оплата через ⭐ Stars прошла успешно!\n\n"
-            f"Ваша подписка на **{days} дней** активирована!\n"
+            f"Ваша подписка на **{days} дней** активирована на обоих серверах!\n"
             f"Сумма: {payment.total_amount} ⭐\n\n"
-            f"Перейдите в «Установить VPN» в главном меню"
+            f"Перейдите в «Установить VPN» → добавьте Германию и/или Нидерланды"
         )
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="📲 Главное меню", callback_data="back_main")]
@@ -578,12 +577,11 @@ async def check_free_sub(callback: CallbackQuery, state: FSMContext):
             if user_got_free(user_id):
                 await callback.message.edit_text("У тебя уже есть бесплатные 3 дня! Перейди в «Установить VPN»")
             else:
-                deeplink = create_hiddify_user(3, callback.from_user.id)
-                if deeplink:
+                result = create_or_extend_both(3, callback.from_user.id)
+                if result:
                     await callback.message.edit_text(
-                        "🎉 Подписка подтверждена!\n\n"
-                        "Подписка на 3 дня выдана!\n\n"
-                        "Подключиться можете через главное меню → «Установить VPN»"
+                        "🎉 Подписка на 3 дня выдана на обоих серверах!\n\n"
+                        "Перейдите в «Установить VPN» → добавьте Германию и/или Нидерланды"
                     )
                     mark_got_free(user_id)
                     await bot.send_message(ADMIN_ID, f"Бесплатно 3 дня выданы: {callback.from_user.full_name} ({user_id})")
@@ -664,44 +662,46 @@ async def device_instruction(callback: CallbackQuery):
 
     user_id = callback.from_user.id
 
+    # Получаем выбранный UUID или fallback
     if uuid:
         conn = sqlite3.connect(DB_FILE)
         c = conn.cursor()
         c.execute(
-            "SELECT uuid, days FROM subscriptions WHERE user_id = ? AND uuid = ? AND status = 'active'",
+            "SELECT uuid FROM subscriptions WHERE user_id = ? AND uuid = ? AND status = 'active'",
             (user_id, uuid)
         )
         sub = c.fetchone()
         conn.close()
-        if sub:
-            selected_uuid = sub[0]
-        else:
-            selected_uuid = None
+        selected_uuid = sub[0] if sub else None
     else:
         selected_uuid = None
 
-    # Если uuid не найден или не передан — берём первую подписку как fallback
     if not selected_uuid:
         subs = get_user_subscriptions(user_id)
         if not subs:
             await callback.message.edit_text("Подписка не найдена. Обратитесь в поддержку.")
             return
-        selected_uuid, _, _ = subs[0]
+        selected_uuid = subs[0][0]  # берём первый активный UUID
 
-    deeplink = f"{DEEPLINK_BASE}{HIDDIFY_CLIENT_PATH}/{selected_uuid}/"
+    # Формируем обе ссылки
+    deeplink_nl = f"{DEEPLINK_BASE}{HIDDIFY_CLIENT_PATH_NL}/{selected_uuid}/"
+    deeplink_de = f"{DEEPLINK_BASE}{HIDDIFY_CLIENT_PATH_DE}/{selected_uuid}/"
 
     text = (
-        "✅ Скачайте и установите приложение Happ нажав на первую кнопку ниже «🔗Скачать приложение»\n\n"
-        "✅ Вставьте свою подписку в приложение нажав на вторую кнопку ниже «🗝️Добавить подписку»\n\n"
-        "⚡ Нажмите на большую кнопку в приложении Happ и наслаждайтесь скоростью."
+        "✅ Скачайте приложение Happ\n\n"
+        "Затем добавьте подписку на нужный сервер (можно оба):\n\n"
+        "🇩🇪 Германия — максимальная скорость\n"
+        "🇳🇱 Нидерланды — стабильность и обход\n\n"
+        "В Happ переключайся между ними в один клик!"
     )
-   
+
     kb = [
-        [InlineKeyboardButton(text="🔗 Скачать приложение", url=HAPP_LINKS.get(platform, HAPP_LINKS["Android"]))],
-        [InlineKeyboardButton(text="🗝️ Добавить подписку", url=deeplink)],
+        [InlineKeyboardButton(text="🔗 Скачать Happ", url=HAPP_LINKS.get(platform, HAPP_LINKS["Android"]))],
+        [InlineKeyboardButton(text="🇩🇪 Добавить Германию", url=deeplink_de)],
+        [InlineKeyboardButton(text="🇳🇱 Добавить Нидерланды", url=deeplink_nl)],
         [InlineKeyboardButton(text="🔙 Главное меню", callback_data="back_main")]
     ]
-   
+
     await callback.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
     await callback.answer()
     
@@ -890,26 +890,28 @@ async def process_days_to_add(message: Message, state: FSMContext):
     data = await state.get_data()
     user_id = data['target_user_id']
     
-    deeplink = extend_or_create_subscription(user_id, days)
-    
-    if deeplink:
-        await bot.send_message(
-            user_id,
-            f"Админ добавил вам **+{days} дней** к подписке! 🎁\n\n"
-            "Проверьте в меню → «Установить VPN»"
-        )
-        await message.answer(
-            f"Успех! Добавлено {days} дней пользователю {user_id}\n\n"
-            f"Ссылка (на всякий): {deeplink}",
-            reply_markup=admin_back_kb(),
-            parse_mode="Markdown"
-        )
-        await bot.send_message(
-            ADMIN_ID,
-            f"[Админ] Добавлено {days} дней пользователю {user_id}"
-        )
-    else:
-        await message.answer("Ошибка при добавлении дней. Проверьте логи.")
+    result = extend_or_create_subscription(user_id, days)
+  
+        if result:
+            await bot.send_message(
+                user_id,
+                f"Админ добавил вам **+{days} дней** к подписке на обоих серверах! 🎁\n\n"
+                "Проверьте в меню → «Установить VPN»"
+            )
+            await message.answer(
+                f"Успех! Добавлено {days} дней пользователю {user_id}\n\n"
+                f"UUID: {result['uuid']}\n"
+                f"Нидерланды: {result['nl']}\n"
+                f"Германия: {result['de']}",
+                reply_markup=admin_back_kb(),
+                parse_mode="Markdown"
+            )
+            await bot.send_message(
+                ADMIN_ID,
+                f"[Админ] Добавлено {days} дней пользователю {user_id} на оба сервера"
+            )
+        else:
+            await message.answer("Ошибка при добавлении дней. Проверьте логи.")
     
     await state.clear()
 
@@ -1017,21 +1019,22 @@ async def yookassa_webhook(request):
             tarif = payment['metadata'].get('tarif', 'неизвестно')
             amount = payment['amount']['value']
 
-            deeplink = extend_or_create_subscription(user_id, days)
-            if deeplink:
-                await bot.send_message(
-                    user_id,
-                    f"🎉 Оплата через ЮKassa прошла успешно!\n\n"
-                    f"Тариф: **{tarif}** \n"
-                    f"Сумма: {amount} ₽\n\n"
-                    "Перейди в меню → «Установить VPN»"
-                )
-                await bot.send_message(
-                    ADMIN_ID,
-                    f"ЮKassa успех: пользователь {user_id} | {tarif} | {days} дней | {amount}₽"
-                )
-            else:
-                await bot.send_message(ADMIN_ID, f"ЮKassa успех, но ошибка выдачи подписки: {user_id}")
+            result = extend_or_create_subscription(user_id, days)
+                        if result:
+                            await bot.send_message(
+                                user_id,
+                                f"🎉 Оплата через ЮKassa прошла успешно!\n\n"
+                                f"Тариф: **{tarif}** \n"
+                                f"Сумма: {amount} ₽\n\n"
+                                "Подписка активирована на обоих серверах!\n"
+                                "Перейди в меню → «Установить VPN»"
+                            )
+                            await bot.send_message(
+                                ADMIN_ID,
+                                f"ЮKassa успех: пользователь {user_id} | {tarif} | {days} дней | {amount}₽ (оба сервера)"
+                            )
+                        else:
+                            await bot.send_message(ADMIN_ID, f"ЮKassa успех, но ошибка выдачи подписки: {user_id}")
 
         return web.Response(status=200)
     except Exception as e:

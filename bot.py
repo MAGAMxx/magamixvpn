@@ -109,6 +109,17 @@ def init_db():
         )
     ''')
     c.execute('''
+        CREATE TABLE IF NOT EXISTS payments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            payment_id TEXT UNIQUE,
+            tarif TEXT,
+            days INTEGER,
+            created_at TEXT,
+            status TEXT DEFAULT 'pending'
+        )
+    ''')
+    c.execute('''
         CREATE TABLE IF NOT EXISTS subscriptions (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER,
@@ -483,6 +494,13 @@ async def pay_yookassa(callback: CallbackQuery, state: FSMContext):
         })
        
         payment_url = payment.confirmation.confirmation_url
+        payment_id = payment.id
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        c.execute("INSERT INTO payments (user_id, payment_id, tarif, days, created_at) VALUES (?, ?, ?, ?, ?)",
+                  (callback.from_user.id, payment_id, tarif_name, days, datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+        conn.commit()
+        conn.close()
        
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="💳 Оплатить сейчас", url=payment_url)],
@@ -1019,60 +1037,51 @@ async def confirm_broadcast(callback: CallbackQuery, state: FSMContext):
     await callback.answer("Рассылка завершена!")
 
 
-async def yookassa_webhook(request):
-    try:
-        event = await request.json()
-        logging.info(f"Получен webhook от ЮKassa: {event}")
-        if event.get('event') == 'payment.succeeded':
-            payment = event['object']
-            user_id = int(payment['metadata']['user_id'])
-            days = int(payment['metadata']['days'])
-            tarif = payment['metadata'].get('tarif', 'неизвестно')
-            amount = payment['amount']['value']
-            result = extend_or_create_subscription(user_id, days)
-            if result:
-                await bot.send_message(
-                    user_id,
-                    f"🎉 Оплата через ЮKassa прошла успешно!\n\n"
-                    f"Тариф: **{tarif}** \n"
-                    f"Сумма: {amount} ₽\n\n"
-                    "Подписка активирована на обоих серверах!\n"
-                    "Перейди в меню → «Установить VPN»"
-                )
-                await bot.send_message(
-                    ADMIN_ID,
-                    f"ЮKassa успех: пользователь {user_id} | {tarif} | {days} дней | {amount}₽ (оба сервера)"
-                )
-            else:
-                await bot.send_message(ADMIN_ID, f"ЮKassa успех, но ошибка выдачи подписки: {user_id}")
-        return web.Response(status=200)
-    except Exception as e:
-        logging.error(f"Webhook ошибка: {e}")
-        return web.Response(status=200)
-
-async def start_webhook_server():
-    app = web.Application()
-    app.router.add_post('/bot-yookassa-webhook', yookassa_webhook)
-    runner = web.AppRunner(app)
-    await runner.setup()
-    site = web.TCPSite(runner, '0.0.0.0', 8081)
-    await site.start()
-    print("Webhook сервер запущен на порту 8081")
 
 async def main_menu():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="Главное меню", callback_data="back_main")]
     ])
 
+async def check_payments():
+    while True:
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        c.execute("SELECT payment_id, user_id, tarif, days FROM payments WHERE status = 'pending'")
+        payments = c.fetchall()
+        for payment_id, user_id, tarif, days in payments:
+            try:
+                payment = Payment.find_one(payment_id)
+                if payment.status == 'succeeded':
+                    result = extend_or_create_subscription(user_id, days)
+                    if result:
+                        await bot.send_message(
+                            user_id,
+                            f"🎉 Оплата через ЮKassa прошла успешно!\n\n"
+                            f"Тариф: **{tarif}** \n"
+                            f"Сумма: {payment.amount.value} ₽\n\n"
+                            "Подписка активирована на обоих серверах!\n"
+                            "Перейди в меню → «Установить VPN»"
+                        )
+                        c.execute("UPDATE payments SET status = 'succeeded' WHERE payment_id = ?", (payment_id,))
+                        conn.commit()
+                    else:
+                        await bot.send_message(user_id, "Оплата прошла, но ошибка выдачи ключа. Напиши в поддержку.")
+                elif payment.status in ['canceled', 'refunded']:
+                    c.execute("UPDATE payments SET status = ? WHERE payment_id = ?", (payment.status, payment_id))
+                    conn.commit()
+            except Exception as e:
+                logging.error(f"Ошибка проверки платежа {payment_id}: {e}")
+        conn.close()
+        await asyncio.sleep(60)  # проверка каждую минуту
 
 async def main():
     logging.basicConfig(level=logging.INFO)
     print("🚀 Бот запущен")
-    await start_webhook_server()
+    asyncio.create_task(check_payments())
     await dp.start_polling(
         bot,
         drop_pending_updates=True
     )
-
 if __name__ == "__main__":
     asyncio.run(main())

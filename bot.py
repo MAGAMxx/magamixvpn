@@ -5,7 +5,7 @@ import requests
 from datetime import datetime
 
 from aiogram import Bot, Dispatcher, types, F, Router
-from aiogram.filters import Command, IsUser
+from aiogram.filters import Command
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, Message, LabeledPrice, PreCheckoutQuery
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -194,22 +194,20 @@ def create_or_extend_both(days: int, user_id: int, existing_uuid: str = None) ->
             logging.error(f"Ошибка создания на NL: {e}")
             return None
 
-    # Создаём/продлеваем на DE с тем же UUID
-    url_de = f"{HIDDIFY_ADMIN_PATH_DE}/api/v2/admin/user/{uuid}/" if uuid else f"{HIDDIFY_ADMIN_PATH_DE}/api/v2/admin/user/"
+    # Для DE всегда создаём нового пользователя с тем же UUID (POST, а не PATCH)
+    # Это решает проблему 500 при обновлении существующего
+    url_de = f"{HIDDIFY_ADMIN_PATH_DE}/api/v2/admin/user/"
     headers_de = {"Hiddify-API-Key": API_KEY_DE, "Content-Type": "application/json"}
-
     payload_de = {
+        "uuid": uuid,  # явно передаём тот же UUID
+        "name": "",
         "package_days": days,
+        "usage_limit_GB": 150,
         "mode": "no_reset"
     }
-    if not existing_uuid:  # новый пользователь — явно указываем UUID
-        payload_de["uuid"] = uuid
 
     try:
-        if existing_uuid:
-            r_de = requests.patch(url_de, headers=headers_de, json=payload_de, timeout=15)
-        else:
-            r_de = requests.post(url_de, headers=headers_de, json=payload_de, timeout=15)
+        r_de = requests.post(url_de, headers=headers_de, json=payload_de, timeout=15)
         r_de.raise_for_status()
     except Exception as e:
         logging.error(f"Ошибка на DE (uuid {uuid}): {e}")
@@ -230,7 +228,6 @@ def create_or_extend_both(days: int, user_id: int, existing_uuid: str = None) ->
         "de": f"{DEEPLINK_BASE}{HIDDIFY_CLIENT_PATH_DE}/{uuid}/",
         "uuid": uuid
     }
-
 
 # Главное меню
 async def send_main_menu(event, user_name, user_id):

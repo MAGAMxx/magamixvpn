@@ -827,20 +827,20 @@ def admin_back_kb():
 @admin_router.message(Command("admin"))
 async def admin_panel(message: Message):
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton("📊 Статистика", callback_data="admin_stats")],
-        [InlineKeyboardButton("➕ Добавить дни пользователю", callback_data="admin_add_days")],
-        [InlineKeyboardButton("📢 Рассылка всем", callback_data="admin_broadcast")],
-        [InlineKeyboardButton("❌ Закрыть", callback_data="admin_close")]
+        [InlineKeyboardButton(text="📊 Статистика", callback_data="admin_stats")],
+        [InlineKeyboardButton(text="➕ Добавить дни пользователю", callback_data="admin_add_days")],
+        [InlineKeyboardButton(text="📢 Рассылка всем", callback_data="admin_broadcast")],
+        [InlineKeyboardButton(text="❌ Закрыть", callback_data="admin_close")]
     ])
     await message.answer("👑 Админ-панель", reply_markup=kb)
 
 @admin_router.callback_query(F.data == "admin_back")
 async def admin_back(callback: CallbackQuery):
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton("📊 Статистика", callback_data="admin_stats")],
-        [InlineKeyboardButton("➕ Добавить дни пользователю", callback_data="admin_add_days")],
-        [InlineKeyboardButton("📢 Рассылка всем", callback_data="admin_broadcast")],
-        [InlineKeyboardButton("❌ Закрыть", callback_data="admin_close")]
+        [InlineKeyboardButton(text="📊 Статистика", callback_data="admin_stats")],
+        [InlineKeyboardButton(text="➕ Добавить дни пользователю", callback_data="admin_add_days")],
+        [InlineKeyboardButton(text="📢 Рассылка всем", callback_data="admin_broadcast")],
+        [InlineKeyboardButton(text="❌ Закрыть", callback_data="admin_close")]
     ])
     await callback.message.edit_text("👑 Админ-панель", reply_markup=kb)
     await callback.answer()
@@ -958,9 +958,9 @@ async def process_broadcast_text(message: Message, state: FSMContext):
     await state.update_data(broadcast_text=text)
     
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton("✅ Отправить всем", callback_data="confirm_broadcast")],
-        [InlineKeyboardButton("🔄 Изменить текст", callback_data="admin_broadcast")],
-        [InlineKeyboardButton("🔙 Назад", callback_data="admin_back")]
+        [InlineKeyboardButton(text="✅ Отправить всем", callback_data="confirm_broadcast")],
+        [InlineKeyboardButton(text="🔄 Изменить текст", callback_data="admin_broadcast")],
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="admin_back")]
     ])
     
     await message.answer(

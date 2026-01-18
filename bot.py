@@ -69,8 +69,21 @@ PAYMENT_METHODS = {
 }
 
 admin_router = Router()
-admin_router.message.filter(IsUser(user_id=ADMIN_ID))
-admin_router.callback_query.filter(IsUser(user_id=ADMIN_ID))
+
+# Фильтр для сообщений (только от админа)
+@admin_router.message()
+async def admin_message_handler(message: Message):
+    if message.from_user.id != ADMIN_ID:
+        return  # игнорируем, если не админ
+    # здесь будет твой код обработки админ-команд (если есть)
+
+# Фильтр для callback_query (только от админа)
+@admin_router.callback_query()
+async def admin_callback_handler(callback: CallbackQuery):
+    if callback.from_user.id != ADMIN_ID:
+        await callback.answer("Доступ запрещён", show_alert=True)
+        return
+
 
 bot = Bot(token=BOT_TOKEN)
 storage = MemoryStorage()
@@ -780,11 +793,13 @@ def admin_back_kb():
 
 @admin_router.message(Command("admin"))
 async def admin_panel(message: Message):
+    if message.from_user.id != ADMIN_ID:
+        return  
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📊 Статистика", callback_data="admin_stats")],
-        [InlineKeyboardButton(text="➕ Добавить дни пользователю", callback_data="admin_add_days")],
-        [InlineKeyboardButton(text="📢 Рассылка всем", callback_data="admin_broadcast")],
-        [InlineKeyboardButton(text="❌ Закрыть", callback_data="admin_close")]
+        [InlineKeyboardButton("📊 Статистика", callback_data="admin_stats")],
+        [InlineKeyboardButton("➕ Добавить дни пользователю", callback_data="admin_add_days")],
+        [InlineKeyboardButton("📢 Рассылка всем", callback_data="admin_broadcast")],
+        [InlineKeyboardButton("❌ Закрыть", callback_data="admin_close")]
     ])
     await message.answer("👑 Админ-панель", reply_markup=kb)
 
@@ -801,6 +816,10 @@ async def admin_close(callback: CallbackQuery):
 # 1. Статистика
 @admin_router.callback_query(F.data == "admin_stats")
 async def admin_stats(callback: CallbackQuery):
+    if callback.from_user.id != ADMIN_ID:
+        await callback.answer("Доступ запрещён", show_alert=True)
+        return
+
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
     

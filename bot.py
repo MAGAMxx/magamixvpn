@@ -240,6 +240,23 @@ def create_or_extend_both(days: int, user_id: int, existing_uuid: str = None) ->
         "uuid": uuid
     }
 
+def get_remaining_days(uuid: str) -> int:
+    """
+    Получает актуальное количество оставшихся дней из Hiddify API (с NL или DE)
+    """
+    url = f"{HIDDIFY_ADMIN_PATH_NL}/api/v2/admin/user/{uuid}/"  # можно переключить на DE, если нужно
+    headers = {"Hiddify-API-Key": API_KEY_NL, "Content-Type": "application/json"}
+    
+    try:
+        response = requests.get(url, headers=headers, timeout=10)
+        response.raise_for_status()
+        data = response.json()
+        remaining_days = data.get("package_days", 0)  # или рассчитай из start_date + package_days - now
+        return max(remaining_days, 0)
+    except Exception as e:
+        logging.error(f"Ошибка получения дней для {uuid}: {e}")
+        return 0  # fallback
+
 # Главное меню
 async def send_main_menu(event, user_name, user_id):
     text = (
@@ -632,23 +649,32 @@ async def install(callback: CallbackQuery):
         ]
         await callback.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
         return
-
-    # Есть подписки
-    import random
     
     text = "🗝️Ваши активные подписки:\n\n✅Нажмите для установки"
     
     kb = []
     
-    for uuid, days, created_at in subs:
+    # Подключаемся к БД один раз вне цикла
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    
+    for uuid, _, created_at in subs:  # days из БД больше не используем
+        remaining_days = get_remaining_days(uuid)
+        
+        # Обновляем days в БД (один UPDATE на итерацию)
+        c.execute("UPDATE subscriptions SET days = ? WHERE uuid = ?", (remaining_days, uuid))
+        
         fake_code = random.randint(100000, 999999)
-        button_text = f"🗝️{fake_code} ({days} дней)"
+        button_text = f"🗝️{fake_code} ({remaining_days} дней)"
         
         kb.append([InlineKeyboardButton(
             text=button_text,
             callback_data=f"select_device_{uuid}"
         )])
-
+    
+    # Коммитим все UPDATE разом (эффективнее)
+    conn.commit()
+    conn.close()
     
     kb.append([InlineKeyboardButton(text="🔙 Главное меню", callback_data="back_main")])
     
@@ -878,8 +904,8 @@ async def process_user_identifier(message: Message, state: FSMContext):
     user_id = None
     
     if text.startswith('@'):
-        username = text[1:]
-        c.execute("SELECT user_id FROM users WHERE username = ?", (username,))
+        username = text[1:].lower()  # приводим к нижнему регистру (Telegram usernames case-insensitive)
+        c.execute("SELECT user_id FROM users WHERE LOWER(username) = ?", (username,))
         result = c.fetchone()
         if result:
             user_id = result[0]
@@ -904,7 +930,7 @@ async def process_user_identifier(message: Message, state: FSMContext):
         )
         await state.set_state(AdminStates.waiting_for_days)
     else:
-        await message.answer("Пользователь не найден. Попробуйте снова:", reply_markup=admin_back_kb())
+        await message.answer("Пользователь не найден. Попробуйте снова (ID или @username):", reply_markup=admin_back_kb())
 
 # Завершение добавления дней
 @admin_router.message(AdminStates.waiting_for_days)

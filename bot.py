@@ -5,7 +5,7 @@ import requests
 from datetime import datetime
 
 from aiogram import Bot, Dispatcher, types, F, Router
-from aiogram.filters import Command, UserFilter
+from aiogram.filters import Command, IsUser
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, Message, LabeledPrice, PreCheckoutQuery
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -69,8 +69,8 @@ PAYMENT_METHODS = {
 }
 
 admin_router = Router()
-admin_router.message.filter(UserFilter(user_id=ADMIN_ID))
-admin_router.callback_query.filter(UserFilter(user_id=ADMIN_ID))
+admin_router.message.filter(IsUser(user_id=ADMIN_ID))
+admin_router.callback_query.filter(IsUser(user_id=ADMIN_ID))
 
 bot = Bot(token=BOT_TOKEN)
 storage = MemoryStorage()

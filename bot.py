@@ -5,7 +5,8 @@ import requests
 from datetime import datetime
 
 from aiogram import Bot, Dispatcher, types, F, Router
-from aiogram.filters import Command, UserFilter
+from aiogram.filters import Command
+from aiogram.filters.user import UserFilter
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, Message, LabeledPrice, PreCheckoutQuery
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup

@@ -775,16 +775,16 @@ class AdminStates(StatesGroup):
 # Вспомогательная функция для кнопки "Назад в админку"
 def admin_back_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton("🔙 Назад в админ-панель", callback_data="admin_back")]
+        [InlineKeyboardButton(text="🔙 Назад в админ-панель", callback_data="admin_back")]
     ])
 
 @admin_router.message(Command("admin"))
 async def admin_panel(message: Message):
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton("📊 Статистика", callback_data="admin_stats")],
-        [InlineKeyboardButton("➕ Добавить дни пользователю", callback_data="admin_add_days")],
-        [InlineKeyboardButton("📢 Рассылка всем", callback_data="admin_broadcast")],
-        [InlineKeyboardButton("❌ Закрыть", callback_data="admin_close")]
+        [InlineKeyboardButton(text="📊 Статистика", callback_data="admin_stats")],
+        [InlineKeyboardButton(text="➕ Добавить дни пользователю", callback_data="admin_add_days")],
+        [InlineKeyboardButton(text="📢 Рассылка всем", callback_data="admin_broadcast")],
+        [InlineKeyboardButton(text="❌ Закрыть", callback_data="admin_close")]
     ])
     await message.answer("👑 Админ-панель", reply_markup=kb)
 
@@ -888,30 +888,29 @@ async def process_days_to_add(message: Message, state: FSMContext):
     
     result = extend_or_create_subscription(user_id, days)
   
-        if result:
-            await bot.send_message(
-                user_id,
-                f"Админ добавил вам **+{days} дней** к подписке на обоих серверах! 🎁\n\n"
-                "Проверьте в меню → «Установить VPN»"
-            )
-            await message.answer(
-                f"Успех! Добавлено {days} дней пользователю {user_id}\n\n"
-                f"UUID: {result['uuid']}\n"
-                f"Нидерланды: {result['nl']}\n"
-                f"Германия: {result['de']}",
-                reply_markup=admin_back_kb(),
-                parse_mode="Markdown"
-            )
-            await bot.send_message(
-                ADMIN_ID,
-                f"[Админ] Добавлено {days} дней пользователю {user_id} на оба сервера"
-            )
-        else:
-            await message.answer("Ошибка при добавлении дней. Проверьте логи.")
+    if result:
+        await bot.send_message(
+            user_id,
+            f"Админ добавил вам **+{days} дней** к подписке на обоих серверах! 🎁\n\n"
+            "Проверьте в меню → «Установить VPN»"
+        )
+        await message.answer(
+            f"Успех! Добавлено {days} дней пользователю {user_id}\n\n"
+            f"UUID: {result['uuid']}\n"
+            f"Нидерланды: {result['nl']}\n"
+            f"Германия: {result['de']}",
+            reply_markup=admin_back_kb(),
+            parse_mode="Markdown"
+        )
+        await bot.send_message(
+            ADMIN_ID,
+            f"[Админ] Добавлено {days} дней пользователю {user_id} на оба сервера"
+        )
+    else:
+        await message.answer("Ошибка при добавлении дней. Проверьте логи.")
     
-    await state.clear()
+await state.clear()
 
-Python# 3. Рассылка всем пользователям
 @admin_router.callback_query(F.data == "admin_broadcast")
 async def admin_broadcast_start(callback: CallbackQuery, state: FSMContext):
     await callback.message.edit_text(
@@ -933,9 +932,9 @@ async def process_broadcast_text(message: Message, state: FSMContext):
     await state.update_data(broadcast_text=text)
     
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton("✅ Отправить всем", callback_data="confirm_broadcast")],
-        [InlineKeyboardButton("🔄 Изменить текст", callback_data="admin_broadcast")],
-        [InlineKeyboardButton("🔙 Назад", callback_data="admin_back")]
+        [InlineKeyboardButton(text="✅ Отправить всем", callback_data="confirm_broadcast")],
+        [InlineKeyboardButton(text="🔄 Изменить текст", callback_data="admin_broadcast")],
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="admin_back")]
     ])
     
     await message.answer(

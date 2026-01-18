@@ -271,29 +271,27 @@ async def give_referral_bonus(referrer_id: int, referred_user_id: int):
     success = False
 
     if existing:
-        sub_id, uuid, current_days, created_at = existing
-        new_days = current_days + days_to_add
+            sub_id, uuid, current_days, created_at = existing
+            new_days = current_days + days_to_add
         
-        # Пытаемся обновить в Hiddify
-        new_days = current_days + days_to_add
-                result = create_or_extend_both(new_days, referrer_id, existing_uuid=uuid)
-                if result:
-                    c.execute("UPDATE subscriptions SET days = ? WHERE id = ?", (new_days, sub_id))
-                    success = True
-                    await bot.send_message(
-                        ADMIN_ID,
-                        f"Реферал от {referred_user_id} → +{days_to_add} дней на обоих серверах для {referrer_id}. Новый total: {new_days}"
-                    )
-                else:
-                    await bot.send_message(ADMIN_ID, f"❌ Не удалось продлить на серверах для {referrer_id} (uuid: {uuid})")
-    else:
-        # Создаём новую — как раньше
-        result = create_or_extend_both(days_to_add, referrer_id)
-        if result:
-            success = True
-    
-    conn.commit()
-    conn.close()
+            result = create_or_extend_both(new_days, referrer_id, existing_uuid=uuid)
+            if result:
+                c.execute("UPDATE subscriptions SET days = ? WHERE id = ?", (new_days, sub_id))
+                success = True
+                await bot.send_message(
+                   ADMIN_ID,
+                    f"Реферал от {referred_user_id} → +{days_to_add} дней на обоих серверах для {referrer_id}. Новый total: {new_days}"
+                )
+            else:
+                await bot.send_message(ADMIN_ID, f"❌ Не удалось продлить на серверах для {referrer_id} (uuid: {uuid})")
+        else:
+            # Создаём новую — как раньше
+            result = create_or_extend_both(days_to_add, referrer_id)
+            if result:
+                success = True
+
+        conn.commit()
+        conn.close()
 
 def extend_or_create_subscription(user_id: int, days_to_add: int) -> dict | None:
     subs = get_user_subscriptions(user_id)

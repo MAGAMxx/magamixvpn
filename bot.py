@@ -68,21 +68,12 @@ PAYMENT_METHODS = {
     "yookassa": "💳 Карта · СБП · ЮMoney"
 }
 
+
 admin_router = Router()
 
-# Фильтр для сообщений (только от админа)
-@admin_router.message()
-async def admin_message_handler(message: Message):
-    if message.from_user.id != ADMIN_ID:
-        return  # игнорируем, если не админ
-    # здесь будет твой код обработки админ-команд (если есть)
-
-# Фильтр для callback_query (только от админа)
-@admin_router.callback_query()
-async def admin_callback_handler(callback: CallbackQuery):
-    if callback.from_user.id != ADMIN_ID:
-        await callback.answer("Доступ запрещён", show_alert=True)
-        return
+# Глобальный фильтр: только от админа
+admin_router.message.filter(lambda message: message.from_user.id == ADMIN_ID)
+admin_router.callback_query.filter(lambda callback: callback.from_user.id == ADMIN_ID)
 
 
 bot = Bot(token=BOT_TOKEN)
@@ -832,10 +823,9 @@ def admin_back_kb():
         [InlineKeyboardButton(text="🔙 Назад в админ-панель", callback_data="admin_back")]
     ])
 
+# Теперь хендлеры без внутренней проверки
 @admin_router.message(Command("admin"))
 async def admin_panel(message: Message):
-    if message.from_user.id != ADMIN_ID:
-        return  
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton("📊 Статистика", callback_data="admin_stats")],
         [InlineKeyboardButton("➕ Добавить дни пользователю", callback_data="admin_add_days")],
@@ -846,7 +836,13 @@ async def admin_panel(message: Message):
 
 @admin_router.callback_query(F.data == "admin_back")
 async def admin_back(callback: CallbackQuery):
-    await admin_panel(callback.message)
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton("📊 Статистика", callback_data="admin_stats")],
+        [InlineKeyboardButton("➕ Добавить дни пользователю", callback_data="admin_add_days")],
+        [InlineKeyboardButton("📢 Рассылка всем", callback_data="admin_broadcast")],
+        [InlineKeyboardButton("❌ Закрыть", callback_data="admin_close")]
+    ])
+    await callback.message.edit_text("👑 Админ-панель", reply_markup=kb)
     await callback.answer()
 
 @admin_router.callback_query(F.data == "admin_close")
@@ -855,36 +851,6 @@ async def admin_close(callback: CallbackQuery):
     await callback.answer("Панель закрыта")
 
 # 1. Статистика
-@admin_router.callback_query(F.data == "admin_stats")
-async def admin_stats(callback: CallbackQuery):
-    if callback.from_user.id != ADMIN_ID:
-        await callback.answer("Доступ запрещён", show_alert=True)
-        return
-
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    
-    c.execute("SELECT COUNT(*) FROM users")
-    total_users = c.fetchone()[0]
-    
-    c.execute("SELECT COUNT(*) FROM subscriptions WHERE status = 'active'")
-    active_subs = c.fetchone()[0]
-    
-    c.execute("SELECT COUNT(DISTINCT user_id) FROM subscriptions")
-    users_with_subs = c.fetchone()[0]
-    
-    text = (
-        f"📊 Статистика на {datetime.now().strftime('%Y-%m-%d %H:%M')}:\n\n"
-        f"Всего пользователей: **{total_users}**\n"
-        f"Пользователей с подпиской: **{users_with_subs}**\n"
-        f"Активных подписок: **{active_subs}**"
-    )
-    
-    await callback.message.edit_text(text, reply_markup=admin_back_kb(), parse_mode="Markdown")
-    conn.close()
-    await callback.answer()
-
-# 2. Добавить дни (начало)
 @admin_router.callback_query(F.data == "admin_add_days")
 async def admin_add_days_start(callback: CallbackQuery, state: FSMContext):
     await callback.message.edit_text(
@@ -904,7 +870,7 @@ async def process_user_identifier(message: Message, state: FSMContext):
     user_id = None
     
     if text.startswith('@'):
-        username = text[1:].lower()  # приводим к нижнему регистру (Telegram usernames case-insensitive)
+        username = text[1:].lower()
         c.execute("SELECT user_id FROM users WHERE LOWER(username) = ?", (username,))
         result = c.fetchone()
         if result:
@@ -914,7 +880,7 @@ async def process_user_identifier(message: Message, state: FSMContext):
             user_id = int(text)
             c.execute("SELECT user_id FROM users WHERE user_id = ?", (user_id,))
             if c.fetchone():
-                pass  # ок
+                pass
             else:
                 user_id = None
         except ValueError:
@@ -932,7 +898,6 @@ async def process_user_identifier(message: Message, state: FSMContext):
     else:
         await message.answer("Пользователь не найден. Попробуйте снова (ID или @username):", reply_markup=admin_back_kb())
 
-# Завершение добавления дней
 @admin_router.message(AdminStates.waiting_for_days)
 async def process_days_to_add(message: Message, state: FSMContext):
     try:
@@ -947,7 +912,7 @@ async def process_days_to_add(message: Message, state: FSMContext):
     user_id = data['target_user_id']
     
     result = extend_or_create_subscription(user_id, days)
-  
+    
     if result:
         await bot.send_message(
             user_id,
@@ -971,6 +936,7 @@ async def process_days_to_add(message: Message, state: FSMContext):
     
     await state.clear()
 
+
 @admin_router.callback_query(F.data == "admin_broadcast")
 async def admin_broadcast_start(callback: CallbackQuery, state: FSMContext):
     await callback.message.edit_text(
@@ -992,9 +958,9 @@ async def process_broadcast_text(message: Message, state: FSMContext):
     await state.update_data(broadcast_text=text)
     
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✅ Отправить всем", callback_data="confirm_broadcast")],
-        [InlineKeyboardButton(text="🔄 Изменить текст", callback_data="admin_broadcast")],
-        [InlineKeyboardButton(text="🔙 Назад", callback_data="admin_back")]
+        [InlineKeyboardButton("✅ Отправить всем", callback_data="confirm_broadcast")],
+        [InlineKeyboardButton("🔄 Изменить текст", callback_data="admin_broadcast")],
+        [InlineKeyboardButton("🔙 Назад", callback_data="admin_back")]
     ])
     
     await message.answer(
@@ -1040,7 +1006,6 @@ async def confirm_broadcast(callback: CallbackQuery, state: FSMContext):
             logging.error(f"Ошибка отправки юзеру {user_id}: {e}")
             failed += 1
         
-        # Обновляем сообщение каждые 20 отправок (чтобы не спамить редактированиями)
         if i % 20 == 0 or i == total:
             await callback.message.edit_text(
                 f"Рассылка запущена...\n\n"

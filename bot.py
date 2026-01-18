@@ -1015,25 +1015,26 @@ async def yookassa_webhook(request):
             amount = payment['amount']['value']
 
             result = extend_or_create_subscription(user_id, days)
-            if result:
-                await bot.send_message(
-                    user_id,
-                    f"🎉 Оплата через ЮKassa прошла успешно!\n\n"
-                    f"Тариф: **{tarif}** \n"
-                    f"Сумма: {amount} ₽\n\n"
-                    "Подписка активирована на обоих серверах!\n"
-                    "Перейди в меню → «Установить VPN»"
-                )
-                await bot.send_message(
-                    ADMIN_ID,
-                    f"ЮKassa успех: пользователь {user_id} | {tarif} | {days} дней | {amount}₽ (оба сервера)"
-                )
-            else:
-                await bot.send_message(ADMIN_ID, f"ЮKassa успех, но ошибка выдачи подписки: {user_id}")
-        return web.Response(status=200)
-    except Exception as e:
-        logging.error(f"Webhook ошибка: {e}")
-        return web.Response(status=200)
+            
+                if result:
+                    await bot.send_message(
+                        user_id,
+                        f"🎉 Оплата через ЮKassa прошла успешно!\n\n"
+                        f"Тариф: **{tarif}** \n"
+                        f"Сумма: {amount} ₽\n\n"
+                        "Подписка активирована на обоих серверах!\n"
+                        "Перейди в меню → «Установить VPN»"
+                    )
+                    await bot.send_message(
+                        ADMIN_ID,
+                        f"ЮKassa успех: пользователь {user_id} | {tarif} | {days} дней | {amount}₽ (оба сервера)"
+                    )
+                else:
+                    await bot.send_message(ADMIN_ID, f"ЮKassa успех, но ошибка выдачи подписки: {user_id}")
+            return web.Response(status=200)
+        except Exception as e:
+            logging.error(f"Webhook ошибка: {e}")
+            return web.Response(status=200)
 
 async def start_webhook_server():
     app = web.Application()

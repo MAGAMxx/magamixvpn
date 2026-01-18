@@ -267,11 +267,11 @@ async def give_referral_bonus(referrer_id: int, referred_user_id: int):
     existing = c.fetchone()
     days_to_add = 3
     success = False
-    
+
     if existing:
         sub_id, uuid, current_days, created_at = existing
         new_days = current_days + days_to_add
-        
+
         result = create_or_extend_both(new_days, referrer_id, existing_uuid=uuid)
         if result:
             c.execute("UPDATE subscriptions SET days = ? WHERE id = ?", (new_days, sub_id))
@@ -287,7 +287,7 @@ async def give_referral_bonus(referrer_id: int, referred_user_id: int):
         result = create_or_extend_both(days_to_add, referrer_id)
         if result:
             success = True
-    
+
     conn.commit()
     conn.close()
 

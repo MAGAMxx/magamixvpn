@@ -170,12 +170,12 @@ def tarifs_menu():
 
 def create_or_extend_both(added_days: int, user_id: int, existing_uuid: str = None) -> dict | None:
     uuid = existing_uuid or str(uuid4())
-    
+   
     def process_server(base_url, api_key, client_path, server_name=""):
         nonlocal uuid
         headers = {"Hiddify-API-Key": api_key, "Content-Type": "application/json"}
         is_new = not existing_uuid
-        
+       
         if is_new:
             url = f"{base_url}/api/v2/admin/user/"
             payload = {
@@ -186,7 +186,7 @@ def create_or_extend_both(added_days: int, user_id: int, existing_uuid: str = No
             }
             if server_name == "DE":
                 payload["uuid"] = uuid
-            
+           
             try:
                 r = requests.post(url, json=payload, headers=headers, timeout=15)
                 r.raise_for_status()
@@ -198,7 +198,7 @@ def create_or_extend_both(added_days: int, user_id: int, existing_uuid: str = No
             except Exception as e:
                 logging.error(f"Ошибка создания на {server_name}: {e}")
                 return False
-        
+       
         else:
             url = f"{base_url}/api/v2/admin/user/{uuid}/"
             try:
@@ -226,12 +226,12 @@ def create_or_extend_both(added_days: int, user_id: int, existing_uuid: str = No
             except Exception as e:
                 logging.error(f"Ошибка продления на {server_name} (uuid {uuid}): {e}")
                 return False
-    
+   
     if not process_server(HIDDIFY_ADMIN_PATH_NL, API_KEY_NL, HIDDIFY_CLIENT_PATH_NL, "NL"):
         return None
-    
+   
     process_server(HIDDIFY_ADMIN_PATH_DE, API_KEY_DE, HIDDIFY_CLIENT_PATH_DE, "DE")
-    
+   
     if not existing_uuid:
         conn = sqlite3.connect(DB_FILE)
         c = conn.cursor()
@@ -239,23 +239,23 @@ def create_or_extend_both(added_days: int, user_id: int, existing_uuid: str = No
         logging.info(f"ВСТАВКА НОВОЙ ПОДПИСКИ: user={user_id}, uuid={uuid}, created_at={created_at}, status=active")
         c.execute("""
             INSERT INTO subscriptions (user_id, uuid, created_at, status)
-            VALUES (?, ?, ?, ?)
-        """, (user_id, uuid, created_at, "active"))
+            VALUES (?, ?, ?, 'active')  -- ЖЁСТКО 'active' без переменной!
+        """, (user_id, uuid, created_at))
         conn.commit()
-        
+       
         # Проверяем сразу после вставки
         c.execute("SELECT status FROM subscriptions WHERE uuid = ?", (uuid,))
         status_after = c.fetchone()[0]
         logging.info(f"СТАТУС СРАЗУ ПОСЛЕ ВСТАВКИ: {status_after}")
-        
+       
         conn.close()
-    
+   
     return {
         "nl": f"{DEEPLINK_BASE}{HIDDIFY_CLIENT_PATH_NL}/{uuid}/",
         "de": f"{DEEPLINK_BASE}{HIDDIFY_CLIENT_PATH_DE}/{uuid}/",
         "uuid": uuid
     }
-
+    
 def delete_hiddify_user(uuid: str, base_url: str, api_key: str) -> bool:
     """
     Удаляет пользователя в Hiddify по UUID.
@@ -277,9 +277,8 @@ def delete_hiddify_user(uuid: str, base_url: str, api_key: str) -> bool:
         return False
 
 def cleanup_expired_subscriptions(user_id: int) -> None:
-    subs = get_user_subscriptions(user_id)
-    if not subs:
-        return
+    logging.info(f"cleanup для {user_id} отключена для теста")
+    return  # ничего не делаем
     
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
@@ -721,15 +720,19 @@ async def check_free_sub(callback: CallbackQuery, state: FSMContext):
 async def install(callback: CallbackQuery):
     user_id = callback.from_user.id
     
-    subs = get_user_subscriptions(user_id)
+    # Временно показываем ВСЕ подписки (даже expired)
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("SELECT uuid, created_at, status FROM subscriptions WHERE user_id = ?", (user_id,))
+    all_subs = c.fetchall()
+    conn.close()
     
-    # Отладка — пишем в лог, что видим
-    logging.info(f"install: user {user_id}, найдено активных подписок: {len(subs)}")
-    for s in subs:
-        logging.info(f"  - uuid: {s[0]}, created_at: {s[1]}")
+    logging.info(f"install: user {user_id}, ВСЕ подписки (включая expired): {all_subs}")
+    
+    subs = [s for s in all_subs if s[2] == 'active']  # только active для кнопок
     
     if not subs:
-        text = "У тебя нет активных подписок.\n\nОформи тариф или пригласи друзей!"
+        text = "У тебя нет активных подписок.\n\nОформи тариф или пригласи друзей!\n\n(Для отладки: всего записей = " + str(len(all_subs)) + ")"
         kb = [
             [InlineKeyboardButton(text="💳 Оплатить VPN", callback_data="pay")],
             [InlineKeyboardButton(text="👥 Пригласить друзей", callback_data="referral")],
@@ -739,37 +742,16 @@ async def install(callback: CallbackQuery):
         return
    
     text = "🗝️Ваши активные подписки:\n\n✅Нажмите для установки"
-    warning_text = ""
-   
     kb = []
-    has_last_day = False
    
-    for uuid, created_at in subs:
+    for uuid, created_at, status in subs:
         remaining_days = get_remaining_days(uuid)
-        logging.info(f"  uuid {uuid}: remaining_days = {remaining_days}")
-       
-        if remaining_days == 1:
-            has_last_day = True
-        
-        if remaining_days <= 0:
-            continue  # просто не показываем, НЕ МЕНЯЕМ статус!
-       
-        fake_code = random.randint(100000, 999999)
-        button_text = f"🗝️{fake_code} ({remaining_days} дней)"
-        kb.append([InlineKeyboardButton(
-            text=button_text,
-            callback_data=f"select_device_{uuid}"
-        )])
-   
-    if has_last_day:
-        warning_text = "\n\n⚠️ У одной из подписок остался **последний день**!\nРекомендуем продлить заранее."
-        kb.insert(0, [InlineKeyboardButton(text="💳 Продлить подписку", callback_data="pay")])
+        button_text = f"🗝️ {uuid[:8]}... ({remaining_days} дней, status={status})"
+        kb.append([InlineKeyboardButton(text=button_text, callback_data=f"select_device_{uuid}")])
    
     kb.append([InlineKeyboardButton(text="🔙 Главное меню", callback_data="back_main")])
    
-    full_text = text + warning_text
-   
-    await callback.message.edit_text(full_text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+    await callback.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
 
 @dp.callback_query(F.data.startswith("select_device_"))
 async def select_device(callback: CallbackQuery):

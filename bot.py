@@ -270,22 +270,23 @@ def create_or_extend_both(added_days: int, user_id: int, existing_uuid: str = No
         "uuid": uuid
     }
 
-def update_hiddify_comment(uuid: str, base_url: str, api_key: str, new_comment: str) -> bool:
+def activate_hiddify_subscription(uuid: str, base_url: str, api_key: str) -> bool:
     """
-    Обновляет comment в Hiddify по UUID.
-    Возвращает True если успешно.
+    Активирует подписку, устанавливая start_date на текущую дату
     """
     url = f"{base_url}/api/v2/admin/user/{uuid}/"
     headers = {"Hiddify-API-Key": api_key, "Content-Type": "application/json"}
-    payload = {"comment": new_comment}
-  
+    
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    payload = {"start_date": today_str}
+    
     try:
         r = requests.patch(url, json=payload, headers=headers, timeout=10)
         r.raise_for_status()
-        logging.info(f"Comment обновлён для {uuid} на {base_url}")
+        logging.info(f"Подписка {uuid} активирована на {base_url} с start_date={today_str}")
         return True
     except Exception as e:
-        logging.error(f"Ошибка обновления comment {uuid} на {base_url}: {e}")
+        logging.error(f"Ошибка активации подписки {uuid} на {base_url}: {e}")
         return False
     
 def delete_hiddify_user(uuid: str, base_url: str, api_key: str) -> bool:
@@ -977,7 +978,6 @@ class AdminStates(StatesGroup):
     waiting_for_days = State()
     waiting_for_broadcast_text = State()
     waiting_for_search_query = State()  # новый для поиска пользователя
-    waiting_for_new_comment = State()   # новый для изменения комментария
 
 # Вспомогательная функция для кнопки "Назад в админку"
 def admin_back_kb():
@@ -1306,7 +1306,6 @@ async def show_user_menu(event, uid: int, uname: str = None):
         [InlineKeyboardButton(text="🔑 Просмотреть подписки", callback_data=f"view_subs_{uid}")],
         [InlineKeyboardButton(text="➕ Продлить (добавить дни)", callback_data=f"add_days_{uid}")],
         [InlineKeyboardButton(text="🗑️ Удалить подписку", callback_data=f"delete_subs_{uid}")],
-        [InlineKeyboardButton(text="✏️ Изменить комментарий в Hiddify", callback_data=f"edit_comment_{uid}")],
         [InlineKeyboardButton(text="🔙 Назад к списку", callback_data="admin_manage_users")]
     ]
     
@@ -1381,42 +1380,6 @@ async def confirm_delete(callback: CallbackQuery):
     await asyncio.sleep(1.5)
     await show_user_menu(callback, uid)
     await callback.answer()
-
-# Изменить комментарий
-@admin_router.callback_query(F.data.startswith("edit_comment_"))
-async def edit_comment_start(callback: CallbackQuery, state: FSMContext):
-    uid = int(callback.data.split("_")[2])
-    await state.update_data(target_user_id=uid)
-    await callback.message.edit_text(
-        f"Введите новый комментарий для Hiddify (применится ко всем подпискам пользователя {uid} на обоих серверах):",
-        reply_markup=admin_back_kb()
-    )
-    await state.set_state(AdminStates.waiting_for_new_comment)
-    await callback.answer()
-
-@admin_router.message(AdminStates.waiting_for_new_comment)
-async def process_new_comment(message: Message, state: FSMContext):
-    new_comment = message.text.strip()
-    data = await state.get_data()
-    uid = data['target_user_id']
-    subs = get_user_subscriptions(uid)
-    if not subs:
-        await message.answer("Нет активных подписок для обновления.")
-        await state.clear()
-        return
-    success = True
-    for uuid, _ in subs:
-        if not update_hiddify_comment(uuid, HIDDIFY_ADMIN_PATH_NL, API_KEY_NL, new_comment):
-            success = False
-        if not update_hiddify_comment(uuid, HIDDIFY_ADMIN_PATH_DE, API_KEY_DE, new_comment):
-            success = False
-    if success:
-        await message.delete()  # убираем сообщение с вводом комментария
-        await message.answer("Комментарий успешно обновлён на обоих серверах.")
-    else:
-       await message.answer("Ошибка обновления. Проверьте логи.")
-    await state.clear()
-    await show_user_menu(message, uid)
 
 async def main_menu():
     return InlineKeyboardMarkup(inline_keyboard=[

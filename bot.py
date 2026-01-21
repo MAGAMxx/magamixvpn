@@ -334,12 +334,28 @@ def cleanup_expired_subscriptions(user_id: int) -> None:
     conn.close()
 
 def get_remaining_days(uuid: str) -> int:
-    # Сначала NL
-    remaining = _get_remaining_from_server(uuid, HIDDIFY_ADMIN_PATH_NL, API_KEY_NL)
-    if remaining > 0:
-        return remaining
-    # Если NL не дал — DE
-    return _get_remaining_from_server(uuid, HIDDIFY_ADMIN_PATH_DE, API_KEY_DE)
+    # Сначала пробуем NL
+    rem_nl = _get_remaining_from_server(uuid, HIDDIFY_ADMIN_PATH_NL, API_KEY_NL)
+    if rem_nl > 0:
+        return rem_nl
+    
+    # Если NL дал 0 — смотрим DE
+    rem_de = _get_remaining_from_server(uuid, HIDDIFY_ADMIN_PATH_DE, API_KEY_DE)
+    
+    # Если оба 0 → показываем хотя бы package_days с любого сервера, где он есть
+    if rem_de == 0:
+        try:
+            url = f"{HIDDIFY_ADMIN_PATH_NL}/api/v2/admin/user/{uuid}/"
+            r = requests.get(url, headers={"Hiddify-API-Key": API_KEY_NL}, timeout=5)
+            if r.status_code == 200:
+                pd = r.json().get("package_days", 0)
+                if pd > 0:
+                    logging.info(f"[Fallback] Для {uuid} показываем package_days = {pd}")
+                    return pd
+        except:
+            pass
+    
+    return max(rem_nl, rem_de)
 
 
 def _get_remaining_from_server(uuid: str, base_url: str, api_key: str) -> int:
@@ -348,44 +364,66 @@ def _get_remaining_from_server(uuid: str, base_url: str, api_key: str) -> int:
     
     try:
         r = requests.get(url, headers=headers, timeout=10)
-        r.raise_for_status()
-        data = r.json()
+        logging.info(f"[GET {uuid}] Status: {r.status_code} | URL: {url}")
         
-        package_days = data.get("package_days", 0)
-        if package_days <= 0:
+        if r.status_code != 200:
+            logging.warning(f"[GET {uuid}] Не 200 → {r.text}")
             return 0
             
+        data = r.json()
+        logging.info(f"[GET {uuid}] Полный ответ API: {data}")
+        
+        package_days = data.get("package_days")
         start_date_str = data.get("start_date")
+        
+        logging.info(f"[GET {uuid}] package_days = {package_days!r} | start_date = {start_date_str!r}")
+        
+        if not isinstance(package_days, (int, float)) or package_days <= 0:
+            logging.warning(f"[GET {uuid}] package_days некорректный → {package_days}")
+            return 0
+            
         if not start_date_str or start_date_str in ("null", "", None):
+            logging.warning(f"[GET {uuid}] start_date пустой/null → считаем 0 дней")
             return 0
         
-        # Парсим дату начала (Hiddify отдаёт YYYY-MM-DD)
-        start_date = datetime.strptime(start_date_str, "%Y-%m-%d")
+        # Пробуем разные форматы даты — Hiddify бывает непоследовательным
+        start_date = None
+        for fmt in ["%Y-%m-%d", "%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M:%S.%f"]:
+            try:
+                start_date = datetime.strptime(start_date_str, fmt)
+                logging.info(f"[GET {uuid}] Успешно распарсили start_date как {fmt}")
+                break
+            except ValueError:
+                continue
         
-        # Вычисляем дату окончания (включительно)
-        expiry_date = start_date + timedelta(days=package_days - 1)
+        if not start_date:
+            logging.error(f"[GET {uuid}] НЕВОЗМОЖНО распарсить start_date: {start_date_str!r}")
+            return 0
         
-        # Сегодня без времени (только дата)
-        today = datetime.now().date()
+        # Самая надёжная и популярная формула для Hiddify
+        # package_days = 7 → доступ до конца 7-го дня включительно
+        expiry_date = start_date + timedelta(days=package_days)
+        today = datetime.now()
         
-        # Сколько полных дней осталось (включая сегодняшний, если ещё не закончился)
-        remaining = (expiry_date.date() - today).days
+        if today >= expiry_date:
+            remaining = 0
+        else:
+            remaining = (expiry_date - today).days
         
-        # Ограничиваем снизу нулём
         remaining = max(0, remaining)
         
         logging.info(
-            f"uuid={uuid} | server={base_url} | "
+            f"[GET {uuid}] server={base_url.split('//')[1].split('/')[0]} | "
             f"start={start_date.date()} | "
-            f"expiry={expiry_date.date()} | "
-            f"today={today} | "
+            f"expiry≈{expiry_date.date()} | "
+            f"now={today} | "
             f"remaining={remaining} дней"
         )
         
         return remaining
         
     except Exception as e:
-        logging.error(f"Ошибка получения дней для {uuid} на {base_url}: {str(e)}")
+        logging.error(f"[GET {uuid}] Критическая ошибка на {base_url}: {str(e)}", exc_info=True)
         return 0
 
 # Главное меню

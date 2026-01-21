@@ -184,23 +184,26 @@ def tarifs_menu():
 
 def create_or_extend_both(added_days: int, user_id: int, existing_uuid: str = None) -> dict | None:
     uuid = existing_uuid or str(uuid4())
-   
+  
     def process_server(base_url, api_key, client_path, server_name=""):
         nonlocal uuid
         headers = {"Hiddify-API-Key": api_key, "Content-Type": "application/json"}
         is_new = not existing_uuid
-       
+      
+        today_str = datetime.now().strftime("%Y-%m-%d")
+      
         if is_new:
             url = f"{base_url}/api/v2/admin/user/"
             payload = {
-                "name": f"",
+                "name": f"tg_user_{user_id}",
                 "package_days": added_days,
                 "usage_limit_GB": 150,
-                "mode": "no_reset"
+                "mode": "no_reset",
+                "start_date": today_str  # ← КЛЮЧЕВОЕ: устанавливаем start_date сразу
             }
             if server_name == "DE":
                 payload["uuid"] = uuid
-           
+          
             try:
                 r = requests.post(url, json=payload, headers=headers, timeout=15)
                 r.raise_for_status()
@@ -208,11 +211,12 @@ def create_or_extend_both(added_days: int, user_id: int, existing_uuid: str = No
                     new_uuid = r.json().get("uuid")
                     if new_uuid:
                         uuid = new_uuid
+                logging.info(f"Создан пользователь {uuid} на {server_name} с start_date={today_str}")
                 return True
             except Exception as e:
-                logging.error(f"Ошибка создания на {server_name}: {e}")
+                logging.error(f"Ошибка создания на {server_name}: {e} | Ответ: {r.text if 'r' in locals() else 'нет ответа'}")
                 return False
-       
+      
         else:
             url = f"{base_url}/api/v2/admin/user/{uuid}/"
             try:
@@ -240,12 +244,13 @@ def create_or_extend_both(added_days: int, user_id: int, existing_uuid: str = No
             except Exception as e:
                 logging.error(f"Ошибка продления на {server_name} (uuid {uuid}): {e}")
                 return False
-   
-    if not process_server(HIDDIFY_ADMIN_PATH_NL, API_KEY_NL, HIDDIFY_CLIENT_PATH_NL, "NL"):
+  
+    success_nl = process_server(HIDDIFY_ADMIN_PATH_NL, API_KEY_NL, HIDDIFY_CLIENT_PATH_NL, "NL")
+    if not success_nl:
         return None
-   
+  
     process_server(HIDDIFY_ADMIN_PATH_DE, API_KEY_DE, HIDDIFY_CLIENT_PATH_DE, "DE")
-   
+  
     if not existing_uuid:
         conn = sqlite3.connect(DB_FILE)
         c = conn.cursor()
@@ -253,17 +258,19 @@ def create_or_extend_both(added_days: int, user_id: int, existing_uuid: str = No
         logging.info(f"ВСТАВКА НОВОЙ ПОДПИСКИ: user={user_id}, uuid={uuid}, created_at={created_at}, status=active")
         c.execute("""
             INSERT INTO subscriptions (user_id, uuid, created_at, status)
-            VALUES (?, ?, ?, 'active')  -- ЖЁСТКО 'active' без переменной!
+            VALUES (?, ?, ?, 'active')
         """, (user_id, uuid, created_at))
         conn.commit()
-       
-        # Проверяем сразу после вставки
+      
         c.execute("SELECT status FROM subscriptions WHERE uuid = ?", (uuid,))
         status_after = c.fetchone()[0]
         logging.info(f"СТАТУС СРАЗУ ПОСЛЕ ВСТАВКИ: {status_after}")
-       
+      
         conn.close()
-   
+  
+    # Даём Hiddify время на обработку start_date
+    time.sleep(5)
+  
     return {
         "nl": f"{DEEPLINK_BASE}{HIDDIFY_CLIENT_PATH_NL}/{uuid}/",
         "de": f"{DEEPLINK_BASE}{HIDDIFY_CLIENT_PATH_DE}/{uuid}/",
@@ -335,25 +342,20 @@ def cleanup_expired_subscriptions(user_id: int) -> None:
     conn.commit()
     conn.close()
 
-def get_remaining_days(uuid: str, max_attempts: int = 10, delay_sec: int = 10) -> int:
-    """
-    Получает оставшиеся дни с повторными попытками (Hiddify может не сразу обновить данные)
-    """
+def get_remaining_days(uuid: str, max_attempts: int = 12, delay_sec: int = 8) -> int:
     for attempt in range(1, max_attempts + 1):
-        # Сначала NL
-        remaining = _get_remaining_from_server(uuid, HIDDIFY_ADMIN_PATH_NL, API_KEY_NL)
-        if remaining > 0:
-            logging.info(f"Получено {remaining} дней для {uuid} с NL (попытка {attempt})")
-            return remaining
+        remaining_nl = _get_remaining_from_server(uuid, HIDDIFY_ADMIN_PATH_NL, API_KEY_NL)
+        if remaining_nl > 0:
+            logging.info(f"Получено {remaining_nl} дней для {uuid} с NL (попытка {attempt})")
+            return remaining_nl
         
-        # Если NL не дал — DE
-        remaining = _get_remaining_from_server(uuid, HIDDIFY_ADMIN_PATH_DE, API_KEY_DE)
-        if remaining > 0:
-            logging.info(f"Получено {remaining} дней для {uuid} с DE (попытка {attempt})")
-            return remaining
+        remaining_de = _get_remaining_from_server(uuid, HIDDIFY_ADMIN_PATH_DE, API_KEY_DE)
+        if remaining_de > 0:
+            logging.info(f"Получено {remaining_de} дней для {uuid} с DE (попытка {attempt})")
+            return remaining_de
         
         logging.warning(f"Попытка {attempt}/{max_attempts}: remaining = 0 для {uuid}. Ждём {delay_sec} сек...")
-        time.sleep(delay_sec)  # ← используем time.sleep вместо asyncio.sleep
+        time.sleep(delay_sec)
     
     logging.error(f"Не удалось получить дни для {uuid} после {max_attempts} попыток")
     return 0
@@ -367,7 +369,6 @@ def _get_remaining_from_server(uuid: str, base_url: str, api_key: str) -> int:
         r.raise_for_status()
         data = r.json()
         
-        # Логируем полный ответ API для отладки
         logging.info(f"API ответ для {uuid} на {base_url}: {data}")
         
         package_days = data.get("package_days", 0)
@@ -382,14 +383,14 @@ def _get_remaining_from_server(uuid: str, base_url: str, api_key: str) -> int:
         start_date = datetime.strptime(start_date_str, "%Y-%m-%d")
         expiry_date = start_date + timedelta(days=package_days)
         today = datetime.now().date()
-        remaining = (expiry_date.date() - today).days + 1  # +1 для включительности
+        remaining = (expiry_date - today).days + 1
         
         return max(0, remaining)
         
     except Exception as e:
         logging.error(f"Ошибка получения дней для {uuid} на {base_url}: {str(e)}")
         return 0
-
+        
 # Главное меню
 async def send_main_menu(event, user_name, user_id):
     text = (

@@ -172,10 +172,12 @@ def create_or_extend_both(added_days: int, user_id: int, existing_uuid: str = No
     uuid = existing_uuid or str(uuid4())
 
     def process_server(base_url, api_key, client_path, server_name=""):
+        nonlocal uuid  # ← сразу в начале, чтобы можно было читать/писать uuid везде
         headers = {"Hiddify-API-Key": api_key, "Content-Type": "application/json"}
         is_new = not existing_uuid
 
         if is_new:
+            # Создание нового пользователя
             url = f"{base_url}/api/v2/admin/user/"
             payload = {
                 "name": f"tg_{user_id}",
@@ -184,24 +186,27 @@ def create_or_extend_both(added_days: int, user_id: int, existing_uuid: str = No
                 "mode": "no_reset"
             }
             if server_name == "DE":
-                payload["uuid"] = uuid
+                payload["uuid"] = uuid  # явно задаём на DE
 
             try:
                 r = requests.post(url, json=payload, headers=headers, timeout=12)
                 r.raise_for_status()
                 if server_name == "NL":
-                    nonlocal uuid
-                    uuid = r.json().get("uuid") or uuid
+                    new_uuid = r.json().get("uuid")
+                    if new_uuid:
+                        uuid = new_uuid
                 return True
             except Exception as e:
                 logging.error(f"Ошибка создания на {server_name}: {e}")
                 return False
 
         else:
+            # Продление существующего
             url = f"{base_url}/api/v2/admin/user/{uuid}/"
             try:
                 r_get = requests.get(url, headers=headers, timeout=10)
                 if r_get.status_code == 404:
+                    # Если нет — создаём как нового
                     return process_server(base_url, api_key, client_path, server_name)
                 r_get.raise_for_status()
                 data = r_get.json()
@@ -221,7 +226,7 @@ def create_or_extend_both(added_days: int, user_id: int, existing_uuid: str = No
                     "usage_limit_GB": 150,
                     "mode": "no_reset"
                 }
-                # Опционально: если истекло — сбросить start_date
+                # Если подписка истекла — можно сбросить start_date (раскомментируй если нужно)
                 # if remaining <= 0:
                 #     payload["start_date"] = datetime.now().strftime("%Y-%m-%d")
 
@@ -232,17 +237,22 @@ def create_or_extend_both(added_days: int, user_id: int, existing_uuid: str = No
                 logging.error(f"Ошибка продления на {server_name} (uuid {uuid}): {e}")
                 return False
 
+    # Основной сервер NL — критично
     if not process_server(HIDDIFY_ADMIN_PATH_NL, API_KEY_NL, HIDDIFY_CLIENT_PATH_NL, "NL"):
         return None
 
+    # Вторичный DE — стараемся, но не прерываем если упадёт
     process_server(HIDDIFY_ADMIN_PATH_DE, API_KEY_DE, HIDDIFY_CLIENT_PATH_DE, "DE")
 
+    # Сохраняем в БД только при создании новой подписки
     if not existing_uuid:
         conn = sqlite3.connect(DB_FILE)
         c = conn.cursor()
         created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        c.execute("INSERT INTO subscriptions (user_id, uuid, created_at, status) VALUES (?, ?, ?, ?)",
-                  (user_id, uuid, created_at, "active"))
+        c.execute("""
+            INSERT INTO subscriptions (user_id, uuid, created_at, status)
+            VALUES (?, ?, ?, ?)
+        """, (user_id, uuid, created_at, "active"))
         conn.commit()
         conn.close()
 
@@ -350,7 +360,7 @@ async def give_referral_bonus(referrer_id: int, referred_user_id: int):
 def extend_or_create_subscription(user_id: int, added_days: int) -> dict | None:
     subs = get_user_subscriptions(user_id)
     if subs:
-        uuid = subs[0][0]
+        uuid = subs[0][0]  # только uuid
         result = create_or_extend_both(added_days=added_days, user_id=user_id, existing_uuid=uuid)
     else:
         result = create_or_extend_both(added_days=added_days, user_id=user_id)

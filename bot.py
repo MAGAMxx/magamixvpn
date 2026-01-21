@@ -285,20 +285,16 @@ def cleanup_expired_subscriptions(user_id: int) -> None:
     c = conn.cursor()
     
     for uuid, created_at in subs:
-        # Защита от новых подписок (младше 30 минут — не трогаем)
         created_at_dt = datetime.strptime(created_at, "%Y-%m-%d %H:%M:%S")
         age_minutes = (datetime.now() - created_at_dt).total_seconds() / 60
+        
         if age_minutes < 30:
-            logging.info(f"Подписка {uuid} новая ({age_minutes:.1f} мин) — пропускаем очистку")
             continue
         
         remaining = get_remaining_days(uuid)
-        if remaining <= 0:  # только если 0 или меньше
-            # Удаляем в Hiddify
+        if remaining <= 0:
             delete_hiddify_user(uuid, HIDDIFY_ADMIN_PATH_NL, API_KEY_NL)
             delete_hiddify_user(uuid, HIDDIFY_ADMIN_PATH_DE, API_KEY_DE)
-            
-            # Помечаем в БД
             c.execute("UPDATE subscriptions SET status = 'expired' WHERE uuid = ? AND user_id = ?",
                       (uuid, user_id))
             logging.info(f"Подписка {uuid} для user {user_id} истекла (0 дней) и удалена")
@@ -722,15 +718,10 @@ async def check_free_sub(callback: CallbackQuery, state: FSMContext):
 async def install(callback: CallbackQuery):
     user_id = callback.from_user.id
     
-    # Даём время Hiddify после оплаты (если только что купил)
-    await asyncio.sleep(10)
+    # Минимальная задержка — только чтобы Hiddify успел после оплаты
+    await asyncio.sleep(3)
     
     subs = get_user_subscriptions(user_id)
-    
-    # Отладка (можно потом убрать)
-    logging.info(f"install: user {user_id}, активных подписок: {len(subs)}")
-    for s in subs:
-        logging.info(f"  - uuid: {s[0]}, created_at: {s[1]}")
     
     if not subs:
         text = "У тебя нет активных подписок.\n\nОформи тариф или пригласи друзей!"
@@ -755,7 +746,7 @@ async def install(callback: CallbackQuery):
             has_last_day = True
         
         if remaining_days <= 0:
-            continue  # не показываем истёкшие
+            continue
         
         fake_code = random.randint(100000, 999999)
         button_text = f"🗝️ {uuid[:8]}... ({remaining_days} дней)"
@@ -773,9 +764,6 @@ async def install(callback: CallbackQuery):
     full_text = text + warning_text
     
     await callback.message.edit_text(full_text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
-    
-    # Чистим истёкшие ПОСЛЕ показа (чтобы пользователь увидел ключ хотя бы раз)
-    cleanup_expired_subscriptions(user_id)
 
 @dp.callback_query(F.data.startswith("select_device_"))
 async def select_device(callback: CallbackQuery):

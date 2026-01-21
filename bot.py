@@ -2,8 +2,8 @@ import asyncio
 import logging
 import sqlite3
 import requests
-from datetime import datetime
-
+from datetime import datetime, timedelta
+import random
 from aiogram import Bot, Dispatcher, types, F, Router
 from aiogram.filters import Command
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, Message, LabeledPrice, PreCheckoutQuery
@@ -115,7 +115,6 @@ def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER,
             uuid TEXT UNIQUE,
-            days INTEGER,
             created_at TEXT,
             status TEXT DEFAULT 'active'
         )
@@ -169,59 +168,81 @@ def tarifs_menu():
     
     return InlineKeyboardMarkup(inline_keyboard=kb)
 
-def create_or_extend_both(days: int, user_id: int, existing_uuid: str = None) -> dict | None:
-    """
-    Создаёт или продлевает подписку на обоих серверах с одним UUID.
-    Возвращает {'nl': deeplink_nl, 'de': deeplink_de, 'uuid': uuid}
-    """
-    uuid = existing_uuid
+def create_or_extend_both(added_days: int, user_id: int, existing_uuid: str = None) -> dict | None:
+    uuid = existing_uuid or str(uuid4())
 
-    # Если нет UUID — создаём на NL (основной сервер)
-    if not uuid:
-        url_nl = f"{HIDDIFY_ADMIN_PATH_NL}/api/v2/admin/user/"
-        headers_nl = {"Hiddify-API-Key": API_KEY_NL, "Content-Type": "application/json"}
-        payload = {
-            "name": "",
-            "package_days": days,
-            "usage_limit_GB": 150,
-            "mode": "no_reset"
-        }
-        try:
-            r = requests.post(url_nl, headers=headers_nl, json=payload, timeout=15)
-            r.raise_for_status()
-            uuid = r.json().get("uuid")
-            if not uuid:
-                return None
-        except Exception as e:
-            logging.error(f"Ошибка создания на NL: {e}")
-            return None
+    def process_server(base_url, api_key, client_path, server_name=""):
+        headers = {"Hiddify-API-Key": api_key, "Content-Type": "application/json"}
+        is_new = not existing_uuid
 
-    # Для DE всегда создаём нового пользователя с тем же UUID (POST, а не PATCH)
-    # Это решает проблему 500 при обновлении существующего
-    url_de = f"{HIDDIFY_ADMIN_PATH_DE}/api/v2/admin/user/"
-    headers_de = {"Hiddify-API-Key": API_KEY_DE, "Content-Type": "application/json"}
-    payload_de = {
-        "uuid": uuid,  # явно передаём тот же UUID
-        "name": "",
-        "package_days": days,
-        "usage_limit_GB": 150,
-        "mode": "no_reset"
-    }
+        if is_new:
+            url = f"{base_url}/api/v2/admin/user/"
+            payload = {
+                "name": f"tg_{user_id}",
+                "package_days": added_days,
+                "usage_limit_GB": 150,
+                "mode": "no_reset"
+            }
+            if server_name == "DE":
+                payload["uuid"] = uuid
 
-    try:
-        r_de = requests.post(url_de, headers=headers_de, json=payload_de, timeout=15)
-        r_de.raise_for_status()
-    except Exception as e:
-        logging.error(f"Ошибка на DE (uuid {uuid}): {e}")
-        # Продолжаем работу, даже если DE упал
+            try:
+                r = requests.post(url, json=payload, headers=headers, timeout=12)
+                r.raise_for_status()
+                if server_name == "NL":
+                    nonlocal uuid
+                    uuid = r.json().get("uuid") or uuid
+                return True
+            except Exception as e:
+                logging.error(f"Ошибка создания на {server_name}: {e}")
+                return False
 
-    # Сохраняем в БД (если новая подписка)
+        else:
+            url = f"{base_url}/api/v2/admin/user/{uuid}/"
+            try:
+                r_get = requests.get(url, headers=headers, timeout=10)
+                if r_get.status_code == 404:
+                    return process_server(base_url, api_key, client_path, server_name)
+                r_get.raise_for_status()
+                data = r_get.json()
+
+                current_package = data.get("package_days", 0)
+                start_date_str = data.get("start_date")
+                remaining = 0
+                if start_date_str and start_date_str != "null":
+                    start_date = datetime.strptime(start_date_str, "%Y-%m-%d")
+                    remaining = (start_date + timedelta(days=current_package) - datetime.now()).days
+
+                new_package_days = current_package + added_days if remaining > 0 else added_days
+
+                payload = {
+                    "package_days": new_package_days,
+                    "name": f"tg_{user_id}",
+                    "usage_limit_GB": 150,
+                    "mode": "no_reset"
+                }
+                # Опционально: если истекло — сбросить start_date
+                # if remaining <= 0:
+                #     payload["start_date"] = datetime.now().strftime("%Y-%m-%d")
+
+                r_patch = requests.patch(url, json=payload, headers=headers, timeout=12)
+                r_patch.raise_for_status()
+                return True
+            except Exception as e:
+                logging.error(f"Ошибка продления на {server_name} (uuid {uuid}): {e}")
+                return False
+
+    if not process_server(HIDDIFY_ADMIN_PATH_NL, API_KEY_NL, HIDDIFY_CLIENT_PATH_NL, "NL"):
+        return None
+
+    process_server(HIDDIFY_ADMIN_PATH_DE, API_KEY_DE, HIDDIFY_CLIENT_PATH_DE, "DE")
+
     if not existing_uuid:
         conn = sqlite3.connect(DB_FILE)
         c = conn.cursor()
         created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        c.execute("INSERT INTO subscriptions (user_id, uuid, days, created_at, status) VALUES (?, ?, ?, ?, ?)",
-                  (user_id, uuid, days, created_at, "active"))
+        c.execute("INSERT INTO subscriptions (user_id, uuid, created_at, status) VALUES (?, ?, ?, ?)",
+                  (user_id, uuid, created_at, "active"))
         conn.commit()
         conn.close()
 
@@ -230,23 +251,35 @@ def create_or_extend_both(days: int, user_id: int, existing_uuid: str = None) ->
         "de": f"{DEEPLINK_BASE}{HIDDIFY_CLIENT_PATH_DE}/{uuid}/",
         "uuid": uuid
     }
-
-def get_remaining_days(uuid: str) -> int:
-    """
-    Получает актуальное количество оставшихся дней из Hiddify API (с NL или DE)
-    """
-    url = f"{HIDDIFY_ADMIN_PATH_NL}/api/v2/admin/user/{uuid}/"  # можно переключить на DE, если нужно
-    headers = {"Hiddify-API-Key": API_KEY_NL, "Content-Type": "application/json"}
     
+def get_remaining_days(uuid: str) -> int:
+    # Сначала NL
+    remaining = _get_remaining_from_server(uuid, HIDDIFY_ADMIN_PATH_NL, API_KEY_NL)
+    if remaining > 0:
+        return remaining
+    # Если NL не дал — DE
+    return _get_remaining_from_server(uuid, HIDDIFY_ADMIN_PATH_DE, API_KEY_DE)
+
+
+def _get_remaining_from_server(uuid: str, base_url: str, api_key: str) -> int:
+    url = f"{base_url}/api/v2/admin/user/{uuid}/"
+    headers = {"Hiddify-API-Key": api_key, "Content-Type": "application/json"}
     try:
-        response = requests.get(url, headers=headers, timeout=10)
-        response.raise_for_status()
-        data = response.json()
-        remaining_days = data.get("package_days", 0)  # или рассчитай из start_date + package_days - now
-        return max(remaining_days, 0)
+        r = requests.get(url, headers=headers, timeout=10)
+        r.raise_for_status()
+        data = r.json()
+        package_days = data.get("package_days", 0)
+        start_date_str = data.get("start_date")
+        if not start_date_str or start_date_str == "null":
+            return 0
+        start_date = datetime.strptime(start_date_str, "%Y-%m-%d")
+        expiry_date = start_date + timedelta(days=package_days)
+        today = datetime.now().date()
+        remaining = (expiry_date.date() - today).days
+        return max(0, remaining)
     except Exception as e:
-        logging.error(f"Ошибка получения дней для {uuid}: {e}")
-        return 0  # fallback
+        logging.error(f"Ошибка получения дней для {uuid} на {base_url}: {e}")
+        return 0
 
 # Главное меню
 async def send_main_menu(event, user_name, user_id):
@@ -287,51 +320,40 @@ async def give_referral_bonus(referrer_id: int, referred_user_id: int):
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
     c.execute("""
-        SELECT id, uuid, days, created_at
+        SELECT uuid, created_at
         FROM subscriptions
         WHERE user_id = ? AND status = 'active'
         ORDER BY created_at DESC
         LIMIT 1
     """, (referrer_id,))
     existing = c.fetchone()
-    days_to_add = 3
-    success = False
-
+    
+    added_days = 3
+    
     if existing:
-        sub_id, uuid, current_days, created_at = existing
-        new_days = current_days + days_to_add
-
-        result = create_or_extend_both(new_days, referrer_id, existing_uuid=uuid)
-        if result:
-            c.execute("UPDATE subscriptions SET days = ? WHERE id = ?", (new_days, sub_id))
-            success = True
-            await bot.send_message(
-                ADMIN_ID,
-                f"Реферал от {referred_user_id} → +{days_to_add} дней на обоих серверах для {referrer_id}. Новый total: {new_days}"
-            )
-        else:
-            await bot.send_message(ADMIN_ID, f"❌ Не удалось продлить на серверах для {referrer_id} (uuid: {uuid})")
+        uuid = existing[0]
+        result = create_or_extend_both(added_days=added_days, user_id=referrer_id, existing_uuid=uuid)
     else:
-        # Создаём новую
-        result = create_or_extend_both(days_to_add, referrer_id)
-        if result:
-            success = True
-
+        result = create_or_extend_both(added_days=added_days, user_id=referrer_id)
+    
+    if result:
+        await bot.send_message(
+            ADMIN_ID,
+            f"Реферал от {referred_user_id} → +{added_days} дней на обоих серверах для {referrer_id}"
+        )
+    else:
+        await bot.send_message(ADMIN_ID, f"❌ Не удалось выдать реферальные дни {referrer_id}")
+    
     conn.commit()
     conn.close()
 
-def extend_or_create_subscription(user_id: int, days_to_add: int) -> dict | None:
+def extend_or_create_subscription(user_id: int, added_days: int) -> dict | None:
     subs = get_user_subscriptions(user_id)
-    
     if subs:
-        # Продлеваем существующую
-        uuid, current_days, _ = subs[0]  # берём первую активную
-        new_days = current_days + days_to_add
-        result = create_or_extend_both(new_days, user_id, existing_uuid=uuid)
+        uuid = subs[0][0]
+        result = create_or_extend_both(added_days=added_days, user_id=user_id, existing_uuid=uuid)
     else:
-        # Создаём новую
-        result = create_or_extend_both(days_to_add, user_id)
-    
+        result = create_or_extend_both(added_days=added_days, user_id=user_id)
     return result
     
 
@@ -564,7 +586,7 @@ async def successful_stars_payment(message: types.Message):
     if result:
         text = (
             f"🎉 Оплата через ⭐ Stars прошла успешно!\n\n"
-            f"Ваша подписка на **{days} дней** активирована на обоих серверах!\n"
+            f"Добавлено **+{days} дней** к подписке!\n"
             f"Сумма: {payment.total_amount} ⭐\n\n"
             f"Перейдите в «Установить VPN» → добавьте Германию и/или Нидерланды"
         )
@@ -649,12 +671,8 @@ async def install(callback: CallbackQuery):
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
     
-    for uuid, _, created_at in subs:  # days из БД больше не используем
+    for uuid, created_at in subs:  # days из БД больше не используем
         remaining_days = get_remaining_days(uuid)
-        
-        # Обновляем days в БД (один UPDATE на итерацию)
-        c.execute("UPDATE subscriptions SET days = ? WHERE uuid = ?", (remaining_days, uuid))
-        
         fake_code = random.randint(100000, 999999)
         button_text = f"🗝️{fake_code} ({remaining_days} дней)"
         

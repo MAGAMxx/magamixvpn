@@ -277,8 +277,8 @@ def delete_hiddify_user(uuid: str, base_url: str, api_key: str) -> bool:
         return False
 
 def cleanup_expired_subscriptions(user_id: int) -> None:
-    logging.info(f"cleanup для {user_id} отключена для теста")
-    return  # ничего не делаем
+    logging.info(f"cleanup для {user_id} отключена полностью")
+    return  # НИЧЕГО НЕ ДЕЛАЕМ
     
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
@@ -746,7 +746,7 @@ async def install(callback: CallbackQuery):
    
     for uuid, created_at, status in subs:
         remaining_days = get_remaining_days(uuid)
-        button_text = f"🗝️ {uuid[:8]}... ({remaining_days} дней, status={status})"
+        button_text = f"🗝️ {uuid[:8]}... ({remaining_days} дней)"
         kb.append([InlineKeyboardButton(text=button_text, callback_data=f"select_device_{uuid}")])
    
     kb.append([InlineKeyboardButton(text="🔙 Главное меню", callback_data="back_main")])
@@ -1188,7 +1188,7 @@ async def main():
     
     # Запускаем фоновые задачи
     asyncio.create_task(check_payments())
-    asyncio.create_task(periodical_cleanup())  # ← новая задача очистки
+    #asyncio.create_task(periodical_cleanup())  # ← новая задача очистки
     
     # Запускаем polling
     await dp.start_polling(

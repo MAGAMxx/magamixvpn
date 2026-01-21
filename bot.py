@@ -179,7 +179,7 @@ def create_or_extend_both(added_days: int, user_id: int, existing_uuid: str = No
         if is_new:
             url = f"{base_url}/api/v2/admin/user/"
             payload = {
-                "name": f"tg_{user_id}",
+                "comment": f"tg_{user_id}",
                 "package_days": added_days,
                 "usage_limit_GB": 150,
                 "mode": "no_reset"
@@ -216,7 +216,7 @@ def create_or_extend_both(added_days: int, user_id: int, existing_uuid: str = No
                 new_package_days = current_package + added_days if remaining > 0 else added_days
                 payload = {
                     "package_days": new_package_days,
-                    "name": f"tg_{user_id}",
+                    "comment": f"tg_{user_id}",
                     "usage_limit_GB": 150,
                     "mode": "no_reset"
                 }
@@ -255,6 +255,24 @@ def create_or_extend_both(added_days: int, user_id: int, existing_uuid: str = No
         "de": f"{DEEPLINK_BASE}{HIDDIFY_CLIENT_PATH_DE}/{uuid}/",
         "uuid": uuid
     }
+
+def update_hiddify_comment(uuid: str, base_url: str, api_key: str, new_comment: str) -> bool:
+    """
+    Обновляет comment в Hiddify по UUID.
+    Возвращает True если успешно.
+    """
+    url = f"{base_url}/api/v2/admin/user/{uuid}/"
+    headers = {"Hiddify-API-Key": api_key, "Content-Type": "application/json"}
+    payload = {"comment": new_comment}
+  
+    try:
+        r = requests.patch(url, json=payload, headers=headers, timeout=10)
+        r.raise_for_status()
+        logging.info(f"Comment обновлён для {uuid} на {base_url}")
+        return True
+    except Exception as e:
+        logging.error(f"Ошибка обновления comment {uuid} на {base_url}: {e}")
+        return False
     
 def delete_hiddify_user(uuid: str, base_url: str, api_key: str) -> bool:
     """
@@ -907,9 +925,11 @@ async def checkpay_handler(message: Message):
 
 # ================== АДМИН-ПАНЕЛЬ ==================
 class AdminStates(StatesGroup):
-    waiting_for_user_id_or_username = State()
+    waiting_for_user_id_or_username = State()  # старый, если нужен
     waiting_for_days = State()
     waiting_for_broadcast_text = State()
+    waiting_for_search_query = State()  # новый для поиска пользователя
+    waiting_for_new_comment = State()   # новый для изменения комментария
 
 # Вспомогательная функция для кнопки "Назад в админку"
 def admin_back_kb():
@@ -922,7 +942,7 @@ def admin_back_kb():
 async def admin_panel(message: Message):
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📊 Статистика", callback_data="admin_stats")],
-        [InlineKeyboardButton(text="➕ Добавить дни пользователю", callback_data="admin_add_days")],
+        [InlineKeyboardButton(text="👤 Управление пользователями", callback_data="admin_manage_users")],  # Новый
         [InlineKeyboardButton(text="📢 Рассылка всем", callback_data="admin_broadcast")],
         [InlineKeyboardButton(text="❌ Закрыть", callback_data="admin_close")]
     ])
@@ -932,7 +952,7 @@ async def admin_panel(message: Message):
 async def admin_back(callback: CallbackQuery):
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📊 Статистика", callback_data="admin_stats")],
-        [InlineKeyboardButton(text="➕ Добавить дни пользователю", callback_data="admin_add_days")],
+        [InlineKeyboardButton(text="👤 Управление пользователями", callback_data="admin_manage_users")],
         [InlineKeyboardButton(text="📢 Рассылка всем", callback_data="admin_broadcast")],
         [InlineKeyboardButton(text="❌ Закрыть", callback_data="admin_close")]
     ])
@@ -943,93 +963,6 @@ async def admin_back(callback: CallbackQuery):
 async def admin_close(callback: CallbackQuery):
     await callback.message.delete()
     await callback.answer("Панель закрыта")
-
-# 1. Статистика
-@admin_router.callback_query(F.data == "admin_add_days")
-async def admin_add_days_start(callback: CallbackQuery, state: FSMContext):
-    await callback.message.edit_text(
-        "Введите user_id или @username пользователя:",
-        reply_markup=admin_back_kb()
-    )
-    await state.set_state(AdminStates.waiting_for_user_id_or_username)
-    await callback.answer()
-
-@admin_router.message(AdminStates.waiting_for_user_id_or_username)
-async def process_user_identifier(message: Message, state: FSMContext):
-    text = message.text.strip()
-    
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    
-    user_id = None
-    
-    if text.startswith('@'):
-        username = text[1:].lower()
-        c.execute("SELECT user_id FROM users WHERE LOWER(username) = ?", (username,))
-        result = c.fetchone()
-        if result:
-            user_id = result[0]
-    else:
-        try:
-            user_id = int(text)
-            c.execute("SELECT user_id FROM users WHERE user_id = ?", (user_id,))
-            if c.fetchone():
-                pass
-            else:
-                user_id = None
-        except ValueError:
-            user_id = None
-    
-    conn.close()
-    
-    if user_id:
-        await state.update_data(target_user_id=user_id)
-        await message.answer(
-            f"Пользователь найден (ID: {user_id})\n\nВведите количество дней для добавления:",
-            reply_markup=admin_back_kb()
-        )
-        await state.set_state(AdminStates.waiting_for_days)
-    else:
-        await message.answer("Пользователь не найден. Попробуйте снова (ID или @username):", reply_markup=admin_back_kb())
-
-@admin_router.message(AdminStates.waiting_for_days)
-async def process_days_to_add(message: Message, state: FSMContext):
-    try:
-        days = int(message.text.strip())
-        if days <= 0:
-            raise ValueError
-    except ValueError:
-        await message.answer("Введите положительное число дней:", reply_markup=admin_back_kb())
-        return
-    
-    data = await state.get_data()
-    user_id = data['target_user_id']
-    
-    result = extend_or_create_subscription(user_id, days)
-    
-    if result:
-        await bot.send_message(
-            user_id,
-            f"Админ добавил вам **+{days} дней** к подписке на обоих серверах! 🎁\n\n"
-            "Проверьте в меню → «Установить VPN»"
-        )
-        await message.answer(
-            f"Успех! Добавлено {days} дней пользователю {user_id}\n\n"
-            f"UUID: {result['uuid']}\n"
-            f"Нидерланды: {result['nl']}\n"
-            f"Германия: {result['de']}",
-            reply_markup=admin_back_kb(),
-            parse_mode="Markdown"
-        )
-        await bot.send_message(
-            ADMIN_ID,
-            f"[Админ] Добавлено {days} дней пользователю {user_id} на оба сервера"
-        )
-    else:
-        await message.answer("Ошибка при добавлении дней. Проверьте логи.")
-    
-    await state.clear()
-
 
 @admin_router.callback_query(F.data == "admin_broadcast")
 async def admin_broadcast_start(callback: CallbackQuery, state: FSMContext):
@@ -1244,6 +1177,220 @@ async def admin_stats(callback: CallbackQuery):
         )
 
     await callback.answer()
+
+# Функция для показа списка пользователей (с пагинацией)
+async def show_users_list(event, state: FSMContext, page: int = None):
+    data = await state.get_data()
+    if page is None:
+        page = data.get('users_page', 0)
+    else:
+        await state.update_data(users_page=page)
+    
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("SELECT COUNT(*) FROM users")
+    total_users = c.fetchone()[0]
+    offset = page * 6
+    c.execute("SELECT user_id, username FROM users ORDER BY reg_date DESC LIMIT 6 OFFSET ?", (offset,))
+    users = c.fetchall()
+    conn.close()
+    
+    text = f"Список пользователей (страница {page + 1} из {((total_users - 1) // 6) + 1}):"
+    kb = []
+    for uid, uname in users:
+        button_text = f"@{uname}" if uname and uname != "нет" else f"ID: {uid}"
+        kb.append([InlineKeyboardButton(text=button_text, callback_data=f"manage_user_{uid}")])
+    
+    pagination_kb = []
+    if page > 0:
+        pagination_kb.append(InlineKeyboardButton(text="◀️ Назад", callback_data=f"users_page_{page-1}"))
+    if offset + len(users) < total_users:
+        pagination_kb.append(InlineKeyboardButton(text="▶️ Вперед", callback_data=f"users_page_{page+1}"))
+    if pagination_kb:
+        kb.append(pagination_kb)
+    
+    kb.append([InlineKeyboardButton(text="🔍 Поиск", callback_data="admin_search_user")])
+    kb.append([InlineKeyboardButton(text="🔙 Назад в админку", callback_data="admin_back")])
+    
+    if isinstance(event, CallbackQuery):
+        await event.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+    else:
+        await event.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+
+# Хендлер входа в управление пользователями
+@admin_router.callback_query(F.data == "admin_manage_users")
+async def admin_manage_users(callback: CallbackQuery, state: FSMContext):
+    await state.update_data(users_page=0)
+    await show_users_list(callback, state)
+
+# Пагинация
+@admin_router.callback_query(F.data.startswith("users_page_"))
+async def change_users_page(callback: CallbackQuery, state: FSMContext):
+    page = int(callback.data.split("_")[2])
+    await show_users_list(callback, state, page=page)
+
+# Поиск пользователя
+@admin_router.callback_query(F.data == "admin_search_user")
+async def admin_search_user_start(callback: CallbackQuery, state: FSMContext):
+    await callback.message.edit_text(
+        "Введите user_id или @username для поиска:",
+        reply_markup=admin_back_kb()
+    )
+    await state.set_state(AdminStates.waiting_for_search_query)
+    await callback.answer()
+
+@admin_router.message(AdminStates.waiting_for_search_query)
+async def process_search_query(message: Message, state: FSMContext):
+    query = message.text.strip()
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    user = None
+    if query.startswith('@'):
+        username = query[1:].lower()
+        c.execute("SELECT user_id, username FROM users WHERE LOWER(username) = ?", (username,))
+        user = c.fetchone()
+    else:
+        try:
+            uid = int(query)
+            c.execute("SELECT user_id, username FROM users WHERE user_id = ?", (uid,))
+            user = c.fetchone()
+        except ValueError:
+            pass
+    conn.close()
+    
+    if user:
+        uid, uname = user
+        await state.clear()
+        await show_user_menu(message, uid, uname)
+    else:
+        await message.answer("Пользователь не найден. Попробуйте снова:", reply_markup=admin_back_kb())
+
+# Функция меню пользователя
+async def show_user_menu(event, uid: int, uname: str = None):
+    if uname is None:
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        c.execute("SELECT username FROM users WHERE user_id = ?", (uid,))
+        result = c.fetchone()
+        uname = result[0] if result else "нет"
+        conn.close()
+    
+    subs = get_user_subscriptions(uid)
+    text = f"Управление пользователем {uid} (@{uname})\n\nАктивные подписки: {len(subs)}"
+    
+    kb = [
+        [InlineKeyboardButton(text="🔑 Просмотреть подписки", callback_data=f"view_subs_{uid}")],
+        [InlineKeyboardButton(text="➕ Продлить (добавить дни)", callback_data=f"add_days_{uid}")],
+        [InlineKeyboardButton(text="🗑️ Удалить подписку", callback_data=f"delete_subs_{uid}")],
+        [InlineKeyboardButton(text="✏️ Изменить комментарий в Hiddify", callback_data=f"edit_comment_{uid}")],
+        [InlineKeyboardButton(text="🔙 Назад к списку", callback_data="admin_manage_users")]
+    ]
+    
+    if isinstance(event, Message):
+        await event.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+    else:
+        await event.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+
+# Выбор пользователя
+@admin_router.callback_query(F.data.startswith("manage_user_"))
+async def manage_user(callback: CallbackQuery, state: FSMContext):
+    uid = int(callback.data.split("_")[2])
+    await show_user_menu(callback, uid)
+
+# Просмотр подписок
+@admin_router.callback_query(F.data.startswith("view_subs_"))
+async def view_subs(callback: CallbackQuery):
+    uid = int(callback.data.split("_")[2])
+    subs = get_user_subscriptions(uid)
+    text = f"Активные подписки для {uid}:\n"
+    if not subs:
+        text += "Нет."
+    else:
+        for uuid, created_at in subs:
+            remaining = get_remaining_days(uuid)
+            text += f"\n- {uuid} (создано {created_at}): {remaining} дней"
+    kb = [[InlineKeyboardButton(text="🔙 Назад к пользователю", callback_data=f"manage_user_{uid}")]]
+    await callback.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+    await callback.answer()
+
+# Продлить (добавить дни) — используем существующий state
+@admin_router.callback_query(F.data.startswith("add_days_"))
+async def add_days_start(callback: CallbackQuery, state: FSMContext):
+    uid = int(callback.data.split("_")[2])
+    await state.update_data(target_user_id=uid)
+    await callback.message.edit_text(
+        f"Введите количество дней для добавления пользователю {uid}:",
+        reply_markup=admin_back_kb()
+    )
+    await state.set_state(AdminStates.waiting_for_days)
+    await callback.answer()
+
+# Удалить подписку (все активные)
+@admin_router.callback_query(F.data.startswith("delete_subs_"))
+async def delete_subs_confirm(callback: CallbackQuery):
+    uid = int(callback.data.split("_")[2])
+    subs = get_user_subscriptions(uid)
+    if not subs:
+        await callback.answer("Нет активных подписок.", show_alert=True)
+        return
+    text = f"Удалить все {len(subs)} активные подписки для {uid}?"
+    kb = [
+        [InlineKeyboardButton(text="✅ Да, удалить", callback_data=f"confirm_delete_{uid}")],
+        [InlineKeyboardButton(text="❌ Отмена", callback_data=f"manage_user_{uid}")]
+    ]
+    await callback.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+    await callback.answer()
+
+@admin_router.callback_query(F.data.startswith("confirm_delete_"))
+async def confirm_delete(callback: CallbackQuery):
+    uid = int(callback.data.split("_")[2])
+    subs = get_user_subscriptions(uid)
+    for uuid, _ in subs:
+        delete_hiddify_user(uuid, HIDDIFY_ADMIN_PATH_NL, API_KEY_NL)
+        delete_hiddify_user(uuid, HIDDIFY_ADMIN_PATH_DE, API_KEY_DE)
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        c.execute("UPDATE subscriptions SET status = 'deleted' WHERE uuid = ? AND user_id = ?", (uuid, uid))
+        conn.commit()
+        conn.close()
+    await callback.message.edit_text("Все подписки удалены.")
+    await show_user_menu(callback, uid)
+    await callback.answer()
+
+# Изменить комментарий
+@admin_router.callback_query(F.data.startswith("edit_comment_"))
+async def edit_comment_start(callback: CallbackQuery, state: FSMContext):
+    uid = int(callback.data.split("_")[2])
+    await state.update_data(target_user_id=uid)
+    await callback.message.edit_text(
+        f"Введите новый комментарий для Hiddify (применится ко всем подпискам пользователя {uid} на обоих серверах):",
+        reply_markup=admin_back_kb()
+    )
+    await state.set_state(AdminStates.waiting_for_new_comment)
+    await callback.answer()
+
+@admin_router.message(AdminStates.waiting_for_new_comment)
+async def process_new_comment(message: Message, state: FSMContext):
+    new_comment = message.text.strip()
+    data = await state.get_data()
+    uid = data['target_user_id']
+    subs = get_user_subscriptions(uid)
+    if not subs:
+        await message.answer("Нет активных подписок для обновления.")
+        await state.clear()
+        return
+    success = True
+    for uuid, _ in subs:
+        if not update_hiddify_comment(uuid, HIDDIFY_ADMIN_PATH_NL, API_KEY_NL, new_comment):
+            success = False
+        if not update_hiddify_comment(uuid, HIDDIFY_ADMIN_PATH_DE, API_KEY_DE, new_comment):
+            success = False
+    if success:
+        await message.answer("Комментарий успешно обновлён на обоих серверах.")
+    else:
+        await message.answer("Ошибка обновления на одном или обоих серверах. Проверьте логи.")
+    await state.clear()
+    await show_user_menu(message, uid)
 
 async def main_menu():
     return InlineKeyboardMarkup(inline_keyboard=[

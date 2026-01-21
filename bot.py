@@ -1131,87 +1131,86 @@ async def confirm_broadcast(callback: CallbackQuery, state: FSMContext):
 async def admin_stats(callback: CallbackQuery):
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
-
+    
     # 1. Общее количество пользователей
     c.execute("SELECT COUNT(*) FROM users")
     total_users = c.fetchone()[0]
-
+    
     # 2. Получили бесплатные 3 дня
     c.execute("SELECT COUNT(*) FROM users WHERE got_free = 1")
     free_users = c.fetchone()[0]
-
-    # 3. Активные подписки (status = 'active')
+    
+    # 3. Активные подписки
     c.execute("SELECT COUNT(*) FROM subscriptions WHERE status = 'active'")
     active_keys = c.fetchone()[0]
-
+    
     # 4. Уникальных пользователей с активной подпиской
     c.execute("SELECT COUNT(DISTINCT user_id) FROM subscriptions WHERE status = 'active'")
     active_users = c.fetchone()[0]
-
+    
     # 5. Успешные платежи ЮKassa
     c.execute("SELECT COUNT(*) FROM payments WHERE status = 'succeeded'")
     successful_payments = c.fetchone()[0]
-    total_rub = 0
-
-    # Более точный вариант — если вы знаете, что рефералки выдаются через give_referral_bonus
-    # и обычно это подписки ровно 3 дня на момент создания — можно посчитать так:
+    
+    # ───────────────────────────────────────────────────────────────
+    # Добавляем определение thirty_days_ago
+    from datetime import datetime, timedelta
+    thirty_days_ago = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d %H:%M:%S")
+    # ───────────────────────────────────────────────────────────────
+    
+    # 6. Примерное количество реферальных бонусов за последние 30 дней
+    # (подписки, созданные в течение часа после другой подписки того же юзера)
     c.execute("""
-        SELECT COUNT(*) 
+        SELECT COUNT(*)
         FROM subscriptions s
         WHERE s.status = 'active'
           AND EXISTS (
-            SELECT 1 FROM subscriptions s2 
-            WHERE s2.user_id = s.user_id 
-              AND s2.created_at < s.created_at 
-              AND julianday(s.created_at) - julianday(s2.created_at) < 1/24  -- в течение часа
+            SELECT 1 FROM subscriptions s2
+            WHERE s2.user_id = s.user_id
+              AND s2.created_at < s.created_at
+              AND julianday(s.created_at) - julianday(s2.created_at) < 1/24  -- < 1 часа
           )
           AND s.created_at > ?
     """, (thirty_days_ago,))
     referral_bonuses = c.fetchone()[0]
-
-    # 8. Подписки, заканчивающиеся сегодня и завтра
+    
+    # 7–8. Подписки, заканчивающиеся сегодня/завтра
     today = datetime.now().date()
     tomorrow = today + timedelta(days=1)
-
-    today_str = today.isoformat()
-    tomorrow_str = tomorrow.isoformat()
-
-    # Считаем через API Hiddify (самый точный способ)
+    
     ending_today = 0
     ending_tomorrow = 0
-
     c.execute("SELECT uuid FROM subscriptions WHERE status = 'active'")
     active_uuids = [row[0] for row in c.fetchall()]
-
+    
     for uuid in active_uuids:
         remaining = get_remaining_days(uuid)
         if remaining == 0:
             ending_today += 1
         elif remaining == 1:
             ending_tomorrow += 1
-
+    
     conn.close()
-
+    
     text = (
         "📊 <b>Статистика бота</b>\n\n"
         f"👥 Всего пользователей: <b>{total_users}</b>\n"
-        f"  └─ Получили бесплатные 3 дня: <b>{free_users}</b>\n\n"
+        f" └─ Получили бесплатные 3 дня: <b>{free_users}</b>\n\n"
         f"🔑 Активных подписок: <b>{active_keys}</b>\n"
-        f"  └─ Пользователей с активной подпиской: <b>{active_users}</b>\n\n"
-        f"🎁 Выдано реферальных бонусов (+3 дня): <b>{referral_bonuses}</b>\n\n"
+        f" └─ Пользователей с активной подпиской: <b>{active_users}</b>\n\n"
+        f"🎁 Выдано реферальных бонусов (+3 дня) за 30 дней: <b>{referral_bonuses}</b>\n\n"
         f"⏰ Заканчиваются:\n"
-        f"  • Сегодня (0 дней): <b>{ending_today}</b>\n"
-        f"  • Завтра (1 день):  <b>{ending_tomorrow}</b>\n\n"
+        f" • Сегодня (0 дней): <b>{ending_today}</b>\n"
+        f" • Завтра (1 день): <b>{ending_tomorrow}</b>\n\n"
         f"💰 Успешных платежей (ЮKassa): <b>{successful_payments}</b>\n"
-        #f"  └─ Примерная выручка: <b>{total_rub:,.2f} ₽</b>\n\n"
         f"<i>Обновлено: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</i>"
     )
-
+    
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🔄 Обновить статистику", callback_data="admin_stats")],
         [InlineKeyboardButton(text="🔙 Назад в админ-панель", callback_data="admin_back")]
     ])
-
+    
     try:
         await callback.message.edit_text(
             text,
@@ -1224,7 +1223,6 @@ async def admin_stats(callback: CallbackQuery):
             reply_markup=kb,
             parse_mode="HTML"
         )
-
     await callback.answer()
 
 # Функция для показа списка пользователей (с пагинацией)

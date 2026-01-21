@@ -1088,22 +1088,6 @@ async def admin_stats(callback: CallbackQuery):
     total_rub_result = c.fetchone()[0]
     total_rub = round(total_rub_result, 2) if total_rub_result else 0
 
-    # 7. Количество выданных реферальных бонусов (+3 дня)
-    # Предполагаем, что реферальные подписки создаются с added_days=3
-    # и можно отличить по дате или по имени/комментарию, но проще — посчитать
-    # все подписки с package_days == 3 и created_at относительно свежие
-    # (это не идеально, но часто работает; если есть поле source — лучше использовать его)
-    thirty_days_ago = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d %H:%M:%S")
-    c.execute("""
-        SELECT COUNT(*) 
-        FROM subscriptions 
-        WHERE created_at > ? 
-          AND status = 'active'
-          -- предполагаем, что реферальные = короткие подписки 3 дня
-          -- если у вас есть поле source или comment — замените условие
-    """, (thirty_days_ago,))
-    recent_short_subs = c.fetchone()[0]
-
     # Более точный вариант — если вы знаете, что рефералки выдаются через give_referral_bonus
     # и обычно это подписки ровно 3 дня на момент создания — можно посчитать так:
     c.execute("""
@@ -1354,6 +1338,7 @@ async def confirm_delete(callback: CallbackQuery):
         conn.commit()
         conn.close()
     await callback.message.edit_text("Все подписки удалены.")
+    await asyncio.sleep(1.5)
     await show_user_menu(callback, uid)
     await callback.answer()
 
@@ -1386,9 +1371,10 @@ async def process_new_comment(message: Message, state: FSMContext):
         if not update_hiddify_comment(uuid, HIDDIFY_ADMIN_PATH_DE, API_KEY_DE, new_comment):
             success = False
     if success:
+        await message.delete()  # убираем сообщение с вводом комментария
         await message.answer("Комментарий успешно обновлён на обоих серверах.")
     else:
-        await message.answer("Ошибка обновления на одном или обоих серверах. Проверьте логи.")
+       await message.answer("Ошибка обновления. Проверьте логи.")
     await state.clear()
     await show_user_menu(message, uid)
 

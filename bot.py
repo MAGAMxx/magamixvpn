@@ -41,7 +41,7 @@ CHANNEL_USERNAME = "@MAGAMIX_VPN"
 CHANNEL_LINK = "https://t.me/MAGAMIX_VPN"
 
 TARIFS = {
-    "✨7 дней": (7, 10),
+    "✨7 дней": (7, 50),
     "✨1 мес": (30, 150),
     "✨3 мес": (90, 350),
     "✨6 мес": (180, 600),
@@ -107,7 +107,8 @@ def init_db():
             tarif TEXT,
             days INTEGER,
             created_at TEXT,
-            status TEXT DEFAULT 'pending'
+            status TEXT DEFAULT 'pending',
+            metadata TEXT  -- ← добавлен этот столбец
         )
     ''')
     c.execute('''
@@ -179,7 +180,7 @@ def create_or_extend_both(added_days: int, user_id: int, existing_uuid: str = No
         if is_new:
             url = f"{base_url}/api/v2/admin/user/"
             payload = {
-                "comment": f"tg_{user_id}",
+                "name": f"",
                 "package_days": added_days,
                 "usage_limit_GB": 150,
                 "mode": "no_reset"
@@ -216,7 +217,7 @@ def create_or_extend_both(added_days: int, user_id: int, existing_uuid: str = No
                 new_package_days = current_package + added_days if remaining > 0 else added_days
                 payload = {
                     "package_days": new_package_days,
-                    "comment": f"tg_{user_id}",
+                    "name": f"tg_user_{user_id}",
                     "usage_limit_GB": 150,
                     "mode": "no_reset"
                 }
@@ -618,8 +619,17 @@ async def pay_yookassa(callback: CallbackQuery, state: FSMContext):
         payment_id = payment.id
         conn = sqlite3.connect(DB_FILE)
         c = conn.cursor()
-        c.execute("INSERT INTO payments (user_id, payment_id, tarif, days, created_at) VALUES (?, ?, ?, ?, ?)",
-                  (callback.from_user.id, payment_id, tarif_name, days, datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+        c.execute("""
+                    INSERT INTO payments (user_id, payment_id, tarif, days, created_at, metadata)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                """, (
+                    callback.from_user.id,
+                    payment_id,
+                    tarif_name,
+                    days,
+                    datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    str(payment.metadata)  # сохраняем как строку
+                ))
         conn.commit()
         conn.close()
        
@@ -1078,15 +1088,7 @@ async def admin_stats(callback: CallbackQuery):
     # 5. Успешные платежи ЮKassa
     c.execute("SELECT COUNT(*) FROM payments WHERE status = 'succeeded'")
     successful_payments = c.fetchone()[0]
-
-    # 6. Сумма по успешным платежам (берём из metadata, если там хранится amount)
-    c.execute("""
-        SELECT SUM(CAST(json_extract(metadata, '$.amount') AS REAL))
-        FROM payments 
-        WHERE status = 'succeeded'
-    """)
-    total_rub_result = c.fetchone()[0]
-    total_rub = round(total_rub_result, 2) if total_rub_result else 0
+    total_rub = 0
 
     # Более точный вариант — если вы знаете, что рефералки выдаются через give_referral_bonus
     # и обычно это подписки ровно 3 дня на момент создания — можно посчитать так:
@@ -1138,7 +1140,7 @@ async def admin_stats(callback: CallbackQuery):
         f"  • Сегодня (0 дней): <b>{ending_today}</b>\n"
         f"  • Завтра (1 день):  <b>{ending_tomorrow}</b>\n\n"
         f"💰 Успешных платежей (ЮKassa): <b>{successful_payments}</b>\n"
-        f"  └─ Примерная выручка: <b>{total_rub:,.2f} ₽</b>\n\n"
+        #f"  └─ Примерная выручка: <b>{total_rub:,.2f} ₽</b>\n\n"
         f"<i>Обновлено: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</i>"
     )
 

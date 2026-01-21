@@ -190,8 +190,6 @@ def create_or_extend_both(added_days: int, user_id: int, existing_uuid: str = No
         headers = {"Hiddify-API-Key": api_key, "Content-Type": "application/json"}
         is_new = not existing_uuid
       
-        today_str = datetime.now().strftime("%Y-%m-%d")
-      
         if is_new:
             url = f"{base_url}/api/v2/admin/user/"
             payload = {
@@ -199,7 +197,7 @@ def create_or_extend_both(added_days: int, user_id: int, existing_uuid: str = No
                 "package_days": added_days,
                 "usage_limit_GB": 150,
                 "mode": "no_reset",
-                "start_date": today_str  # ← КЛЮЧЕВОЕ: устанавливаем start_date сразу
+                "start_date": datetime.now().strftime("%Y-%m-%d")  # Пробуем сразу указать
             }
             if server_name == "DE":
                 payload["uuid"] = uuid
@@ -211,10 +209,10 @@ def create_or_extend_both(added_days: int, user_id: int, existing_uuid: str = No
                     new_uuid = r.json().get("uuid")
                     if new_uuid:
                         uuid = new_uuid
-                logging.info(f"Создан пользователь {uuid} на {server_name} с start_date={today_str}")
+                logging.info(f"Создан на {server_name}: {uuid}")
                 return True
             except Exception as e:
-                logging.error(f"Ошибка создания на {server_name}: {e} | Ответ: {r.text if 'r' in locals() else 'нет ответа'}")
+                logging.error(f"Ошибка создания на {server_name}: {e}")
                 return False
       
         else:
@@ -245,8 +243,7 @@ def create_or_extend_both(added_days: int, user_id: int, existing_uuid: str = No
                 logging.error(f"Ошибка продления на {server_name} (uuid {uuid}): {e}")
                 return False
   
-    success_nl = process_server(HIDDIFY_ADMIN_PATH_NL, API_KEY_NL, HIDDIFY_CLIENT_PATH_NL, "NL")
-    if not success_nl:
+    if not process_server(HIDDIFY_ADMIN_PATH_NL, API_KEY_NL, HIDDIFY_CLIENT_PATH_NL, "NL"):
         return None
   
     process_server(HIDDIFY_ADMIN_PATH_DE, API_KEY_DE, HIDDIFY_CLIENT_PATH_DE, "DE")
@@ -261,39 +258,45 @@ def create_or_extend_both(added_days: int, user_id: int, existing_uuid: str = No
             VALUES (?, ?, ?, 'active')
         """, (user_id, uuid, created_at))
         conn.commit()
-      
+        
         c.execute("SELECT status FROM subscriptions WHERE uuid = ?", (uuid,))
         status_after = c.fetchone()[0]
         logging.info(f"СТАТУС СРАЗУ ПОСЛЕ ВСТАВКИ: {status_after}")
-      
         conn.close()
-  
-    # Даём Hiddify время на обработку start_date
-    time.sleep(5)
-  
+    
+    # Активируем подписку явно (если start_date не установился при создании)
+    time.sleep(3)  # небольшая пауза
+    activate_hiddify_user(uuid, HIDDIFY_ADMIN_PATH_NL, API_KEY_NL, added_days)
+    activate_hiddify_user(uuid, HIDDIFY_ADMIN_PATH_DE, API_KEY_DE, added_days)
+    
+    time.sleep(5)  # ждём финальной синхронизации
+    
     return {
         "nl": f"{DEEPLINK_BASE}{HIDDIFY_CLIENT_PATH_NL}/{uuid}/",
         "de": f"{DEEPLINK_BASE}{HIDDIFY_CLIENT_PATH_DE}/{uuid}/",
         "uuid": uuid
     }
-
-def activate_hiddify_subscription(uuid: str, base_url: str, api_key: str) -> bool:
+    
+def activate_hiddify_user(uuid: str, base_url: str, api_key: str, package_days: int) -> bool:
     """
-    Активирует подписку, устанавливая start_date на текущую дату
+    Активирует пользователя в Hiddify: устанавливает start_date на сегодня и package_days
     """
     url = f"{base_url}/api/v2/admin/user/{uuid}/"
     headers = {"Hiddify-API-Key": api_key, "Content-Type": "application/json"}
     
     today_str = datetime.now().strftime("%Y-%m-%d")
-    payload = {"start_date": today_str}
+    payload = {
+        "start_date": today_str,
+        "package_days": package_days  # обязательно повторяем, чтобы активировать
+    }
     
     try:
         r = requests.patch(url, json=payload, headers=headers, timeout=10)
         r.raise_for_status()
-        logging.info(f"Подписка {uuid} активирована на {base_url} с start_date={today_str}")
+        logging.info(f"Пользователь {uuid} активирован на {base_url}: start_date={today_str}, days={package_days}")
         return True
     except Exception as e:
-        logging.error(f"Ошибка активации подписки {uuid} на {base_url}: {e}")
+        logging.error(f"Ошибка активации {uuid} на {base_url}: {e} | Ответ: {r.text if 'r' in locals() else 'нет ответа'}")
         return False
     
 def delete_hiddify_user(uuid: str, base_url: str, api_key: str) -> bool:

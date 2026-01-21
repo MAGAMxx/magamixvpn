@@ -337,15 +337,22 @@ def _get_remaining_from_server(uuid: str, base_url: str, api_key: str) -> int:
         r = requests.get(url, headers=headers, timeout=10)
         r.raise_for_status()
         data = r.json()
+        
         package_days = data.get("package_days", 0)
+        if package_days == 0:
+            return 0
+            
         start_date_str = data.get("start_date")
         if not start_date_str or start_date_str == "null":
             return 0
+            
         start_date = datetime.strptime(start_date_str, "%Y-%m-%d")
         expiry_date = start_date + timedelta(days=package_days)
         today = datetime.now().date()
-        remaining = (expiry_date.date() - today).days
-        return max(0, remaining)
+        remaining = (expiry_date - today).days
+        
+        # Hiddify иногда даёт на 1 день больше — делаем как в панели
+        return max(0, remaining + 1)
     except Exception as e:
         logging.error(f"Ошибка получения дней для {uuid} на {base_url}: {e}")
         return 0
@@ -759,12 +766,8 @@ async def install(callback: CallbackQuery):
         await callback.answer()
         return
     
-    # Есть подписки → показываем их все
     text = "🗝️ Твои подписки:\n\nНажми на нужную, чтобы получить инструкцию по установке"
-    warning_text = ""
-    
     kb = []
-    has_expired = False
     has_last_day = False
     
     for uuid, created_at in subs:
@@ -772,31 +775,19 @@ async def install(callback: CallbackQuery):
         
         if remaining_days == 1:
             has_last_day = True
-        if remaining_days <= 0:
-            has_expired = True
-        
+            
         status_text = f" ({remaining_days} дней)"
         if remaining_days <= 0:
             status_text = " (истекла)"
         
         button_text = f"🗝️ {uuid[:8]}...{status_text}"
-        
         kb.append([InlineKeyboardButton(
             text=button_text,
             callback_data=f"select_device_{uuid}"
         )])
     
-    # Предупреждения
-    if has_expired:
-        warning_text += "\n\n⚠️ Некоторые подписки уже истекли — их нужно продлить!"
     if has_last_day:
-        warning_text += "\n\n⚠️ У одной из подписок остался последний день — продли заранее!"
-    
-    if warning_text:
-        text += warning_text
-    
-    # Кнопка продления всегда видна, если есть истекшие или мало дней
-    if has_expired or has_last_day:
+        text += "\n\n⚠️ У одной из подписок остался последний день!\nРекомендуем продлить заранее."
         kb.insert(0, [InlineKeyboardButton(text="💳 Продлить подписку", callback_data="pay")])
     
     kb.append([InlineKeyboardButton(text="🔙 Главное меню", callback_data="back_main")])

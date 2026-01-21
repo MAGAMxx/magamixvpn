@@ -334,28 +334,22 @@ def cleanup_expired_subscriptions(user_id: int) -> None:
     conn.close()
 
 def get_remaining_days(uuid: str) -> int:
-    # Сначала пробуем NL
-    rem_nl = _get_remaining_from_server(uuid, HIDDIFY_ADMIN_PATH_NL, API_KEY_NL)
-    if rem_nl > 0:
-        return rem_nl
-    
-    # Если NL дал 0 — смотрим DE
-    rem_de = _get_remaining_from_server(uuid, HIDDIFY_ADMIN_PATH_DE, API_KEY_DE)
-    
-    # Если оба 0 → показываем хотя бы package_days с любого сервера, где он есть
-    if rem_de == 0:
+    # Просто берём package_days с первого доступного сервера
+    for base_url, api_key in [
+        (HIDDIFY_ADMIN_PATH_NL, API_KEY_NL),
+        (HIDDIFY_ADMIN_PATH_DE, API_KEY_DE)
+    ]:
         try:
-            url = f"{HIDDIFY_ADMIN_PATH_NL}/api/v2/admin/user/{uuid}/"
-            r = requests.get(url, headers={"Hiddify-API-Key": API_KEY_NL}, timeout=5)
+            url = f"{base_url}/api/v2/admin/user/{uuid}/"
+            r = requests.get(url, headers={"Hiddify-API-Key": api_key}, timeout=8)
             if r.status_code == 200:
                 pd = r.json().get("package_days", 0)
-                if pd > 0:
-                    logging.info(f"[Fallback] Для {uuid} показываем package_days = {pd}")
-                    return pd
-        except:
-            pass
+                logging.info(f"uuid={uuid} → package_days = {pd} с {base_url}")
+                return pd
+        except Exception as e:
+            logging.warning(f"Ошибка получения package_days с {base_url}: {e}")
     
-    return max(rem_nl, rem_de)
+    return 0
 
 
 def _get_remaining_from_server(uuid: str, base_url: str, api_key: str) -> int:
@@ -371,19 +365,15 @@ def _get_remaining_from_server(uuid: str, base_url: str, api_key: str) -> int:
             return 0
             
         data = r.json()
-        logging.info(f"[GET {uuid}] Полный ответ API: {data}")
         
         package_days = data.get("package_days")
         start_date_str = data.get("start_date")
         
-        logging.info(f"[GET {uuid}] package_days = {package_days!r} | start_date = {start_date_str!r}")
         
         if not isinstance(package_days, (int, float)) or package_days <= 0:
-            logging.warning(f"[GET {uuid}] package_days некорректный → {package_days}")
             return 0
             
         if not start_date_str or start_date_str in ("null", "", None):
-            logging.warning(f"[GET {uuid}] start_date пустой/null → считаем 0 дней")
             return 0
         
         # Пробуем разные форматы даты — Hiddify бывает непоследовательным
@@ -391,13 +381,11 @@ def _get_remaining_from_server(uuid: str, base_url: str, api_key: str) -> int:
         for fmt in ["%Y-%m-%d", "%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M:%S.%f"]:
             try:
                 start_date = datetime.strptime(start_date_str, fmt)
-                logging.info(f"[GET {uuid}] Успешно распарсили start_date как {fmt}")
                 break
             except ValueError:
                 continue
         
         if not start_date:
-            logging.error(f"[GET {uuid}] НЕВОЗМОЖНО распарсить start_date: {start_date_str!r}")
             return 0
         
         # Самая надёжная и популярная формула для Hiddify

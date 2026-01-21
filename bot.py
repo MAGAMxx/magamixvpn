@@ -321,7 +321,7 @@ async def send_main_menu(event, user_name, user_id):
 def get_user_subscriptions(user_id: int):
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
-    c.execute("SELECT uuid, days, created_at FROM subscriptions WHERE user_id = ? AND status = 'active'", (user_id,))
+    c.execute("SELECT uuid, created_at FROM subscriptions WHERE user_id = ? AND status = 'active'", (user_id,))
     subs = c.fetchall()
     conn.close()
     return subs
@@ -662,7 +662,7 @@ async def check_free_sub(callback: CallbackQuery, state: FSMContext):
 async def install(callback: CallbackQuery):
     user_id = callback.from_user.id
     subs = get_user_subscriptions(user_id)
-    
+   
     if not subs:
         text = "У тебя нет активных подписок.\n\nОформи тариф или возьми 3 дня бесплатно!"
         kb = [
@@ -672,31 +672,25 @@ async def install(callback: CallbackQuery):
         ]
         await callback.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
         return
-    
+   
     text = "🗝️Ваши активные подписки:\n\n✅Нажмите для установки"
-    
+   
     kb = []
-    
-    # Подключаемся к БД один раз вне цикла
-    conn = sqlite3.connect(DB_FILE)
-    c = conn.cursor()
-    
-    for uuid, created_at in subs:  # days из БД больше не используем
+   
+    # БД больше не нужна здесь!
+    for uuid, created_at in subs:  # ← ровно два значения
         remaining_days = get_remaining_days(uuid)
+       
         fake_code = random.randint(100000, 999999)
         button_text = f"🗝️{fake_code} ({remaining_days} дней)"
-        
+       
         kb.append([InlineKeyboardButton(
             text=button_text,
             callback_data=f"select_device_{uuid}"
         )])
-    
-    # Коммитим все UPDATE разом (эффективнее)
-    conn.commit()
-    conn.close()
-    
+   
     kb.append([InlineKeyboardButton(text="🔙 Главное меню", callback_data="back_main")])
-    
+   
     await callback.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
 
 @dp.callback_query(F.data.startswith("select_device_"))

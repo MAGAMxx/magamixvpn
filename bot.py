@@ -14,6 +14,7 @@ from yookassa import Configuration, Payment
 from yookassa.domain.notification import WebhookNotification
 from uuid import uuid4
 from aiohttp import web
+import time
 
 
 # ================== НАСТРОЙКИ ==================
@@ -333,7 +334,7 @@ def cleanup_expired_subscriptions(user_id: int) -> None:
     conn.commit()
     conn.close()
 
-def get_remaining_days(uuid: str, max_attempts: int = 5, delay_sec: int = 3) -> int:
+def get_remaining_days(uuid: str, max_attempts: int = 10, delay_sec: int = 10) -> int:
     """
     Получает оставшиеся дни с повторными попытками (Hiddify может не сразу обновить данные)
     """
@@ -351,7 +352,7 @@ def get_remaining_days(uuid: str, max_attempts: int = 5, delay_sec: int = 3) -> 
             return remaining
         
         logging.warning(f"Попытка {attempt}/{max_attempts}: remaining = 0 для {uuid}. Ждём {delay_sec} сек...")
-        asyncio.sleep(delay_sec)  # ждём перед следующей попыткой
+        time.sleep(delay_sec)  # ← используем time.sleep вместо asyncio.sleep
     
     logging.error(f"Не удалось получить дни для {uuid} после {max_attempts} попыток")
     return 0
@@ -365,27 +366,22 @@ def _get_remaining_from_server(uuid: str, base_url: str, api_key: str) -> int:
         r.raise_for_status()
         data = r.json()
         
+        # Логируем полный ответ API для отладки
+        logging.info(f"API ответ для {uuid} на {base_url}: {data}")
+        
         package_days = data.get("package_days", 0)
         if package_days <= 0:
             return 0
             
         start_date_str = data.get("start_date")
         if not start_date_str or start_date_str in ("null", "", None):
+            logging.warning(f"start_date пустой или null для {uuid} на {base_url}")
             return 0
         
-        # Парсим дату (Hiddify отдаёт YYYY-MM-DD)
         start_date = datetime.strptime(start_date_str, "%Y-%m-%d")
-        
-        # Вычисляем expiry_date как datetime (сохраняем тип)
         expiry_date = start_date + timedelta(days=package_days)
-        
-        # today тоже делаем datetime для корректного вычитания
-        today = datetime.now()
-        
-        # Разница в днях (Hiddify считает включительно)
-        remaining = (expiry_date - today).days + 1  # +1 — последний день считается полным
-        
-        logging.info(f"Для {uuid} на {base_url}: package_days={package_days}, start={start_date_str}, expiry={expiry_date.date()}, today={today.date()}, remaining={remaining}")
+        today = datetime.now().date()
+        remaining = (expiry_date.date() - today).days + 1  # +1 для включительности
         
         return max(0, remaining)
         

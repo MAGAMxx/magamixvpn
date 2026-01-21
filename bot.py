@@ -719,7 +719,7 @@ async def install(callback: CallbackQuery):
     user_id = callback.from_user.id
     
     # Минимальная задержка — только чтобы Hiddify успел после оплаты
-    await asyncio.sleep(3)
+    await asyncio.sleep(1)
     
     subs = get_user_subscriptions(user_id)
     

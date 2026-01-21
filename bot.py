@@ -721,13 +721,12 @@ async def check_free_sub(callback: CallbackQuery, state: FSMContext):
 async def install(callback: CallbackQuery):
     user_id = callback.from_user.id
     
-    # Даём время Hiddify обновить данные после создания/оплаты
-    await asyncio.sleep(10)  # 10 секунд — надёжно
-    
-    # Чистим истёкшие (с проверкой возраста — новые не тронет)
-    cleanup_expired_subscriptions(user_id)
-    
     subs = get_user_subscriptions(user_id)
+    
+    # Отладка — пишем в лог, что видим
+    logging.info(f"install: user {user_id}, найдено активных подписок: {len(subs)}")
+    for s in subs:
+        logging.info(f"  - uuid: {s[0]}, created_at: {s[1]}")
     
     if not subs:
         text = "У тебя нет активных подписок.\n\nОформи тариф или пригласи друзей!"
@@ -738,38 +737,38 @@ async def install(callback: CallbackQuery):
         ]
         await callback.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
         return
-    
+   
     text = "🗝️Ваши активные подписки:\n\n✅Нажмите для установки"
     warning_text = ""
-    
+   
     kb = []
     has_last_day = False
-    
+   
     for uuid, created_at in subs:
         remaining_days = get_remaining_days(uuid)
-        
+        logging.info(f"  uuid {uuid}: remaining_days = {remaining_days}")
+       
         if remaining_days == 1:
             has_last_day = True
         
-        # Убрали лишнюю пометку 'expired' — cleanup уже всё сделал
         if remaining_days <= 0:
-            continue  # просто не показываем
-        
+            continue  # просто не показываем, НЕ МЕНЯЕМ статус!
+       
         fake_code = random.randint(100000, 999999)
         button_text = f"🗝️{fake_code} ({remaining_days} дней)"
         kb.append([InlineKeyboardButton(
             text=button_text,
             callback_data=f"select_device_{uuid}"
         )])
-    
+   
     if has_last_day:
         warning_text = "\n\n⚠️ У одной из подписок остался **последний день**!\nРекомендуем продлить заранее."
         kb.insert(0, [InlineKeyboardButton(text="💳 Продлить подписку", callback_data="pay")])
-    
+   
     kb.append([InlineKeyboardButton(text="🔙 Главное меню", callback_data="back_main")])
-    
+   
     full_text = text + warning_text
-    
+   
     await callback.message.edit_text(full_text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
 
 @dp.callback_query(F.data.startswith("select_device_"))

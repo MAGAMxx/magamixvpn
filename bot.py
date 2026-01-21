@@ -344,15 +344,21 @@ def _get_remaining_from_server(uuid: str, base_url: str, api_key: str) -> int:
             
         start_date_str = data.get("start_date")
         if not start_date_str or start_date_str in ("null", "", None):
-            return 0  
+            return 0
         
-        start_date = datetime.strptime(start_date_str, "%Y-%m-%d").date()
-
+        # Парсим дату (Hiddify отдаёт YYYY-MM-DD)
+        start_date = datetime.strptime(start_date_str, "%Y-%m-%d")
+        
+        # Вычисляем expiry_date как datetime (сохраняем тип)
         expiry_date = start_date + timedelta(days=package_days)
         
-        today = datetime.now().date()
+        # today тоже делаем datetime для корректного вычитания
+        today = datetime.now()
         
-        remaining = (expiry_date - today).days + 1 
+        # Разница в днях (Hiddify считает включительно)
+        remaining = (expiry_date - today).days + 1  # +1 — последний день считается полным
+        
+        logging.info(f"Для {uuid} на {base_url}: package_days={package_days}, start={start_date_str}, expiry={expiry_date.date()}, today={today.date()}, remaining={remaining}")
         
         return max(0, remaining)
         

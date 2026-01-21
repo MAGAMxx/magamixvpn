@@ -345,6 +345,7 @@ def get_remaining_days(uuid: str) -> int:
 def _get_remaining_from_server(uuid: str, base_url: str, api_key: str) -> int:
     url = f"{base_url}/api/v2/admin/user/{uuid}/"
     headers = {"Hiddify-API-Key": api_key, "Content-Type": "application/json"}
+    
     try:
         r = requests.get(url, headers=headers, timeout=10)
         r.raise_for_status()
@@ -358,21 +359,30 @@ def _get_remaining_from_server(uuid: str, base_url: str, api_key: str) -> int:
         if not start_date_str or start_date_str in ("null", "", None):
             return 0
         
-        # Парсим дату (Hiddify отдаёт YYYY-MM-DD)
+        # Парсим дату начала (Hiddify отдаёт YYYY-MM-DD)
         start_date = datetime.strptime(start_date_str, "%Y-%m-%d")
         
-        # Вычисляем expiry_date как datetime (сохраняем тип)
-        expiry_date = start_date + timedelta(days=package_days)
+        # Вычисляем дату окончания (включительно)
+        expiry_date = start_date + timedelta(days=package_days - 1)
         
-        # today тоже делаем datetime для корректного вычитания
-        today = datetime.now()
+        # Сегодня без времени (только дата)
+        today = datetime.now().date()
         
-        # Разница в днях (Hiddify считает включительно)
-        remaining = (expiry_date - today).days + 1  # +1 — последний день считается полным
+        # Сколько полных дней осталось (включая сегодняшний, если ещё не закончился)
+        remaining = (expiry_date.date() - today).days
         
-        logging.info(f"Для {uuid} на {base_url}: package_days={package_days}, start={start_date_str}, expiry={expiry_date.date()}, today={today.date()}, remaining={remaining}")
+        # Ограничиваем снизу нулём
+        remaining = max(0, remaining)
         
-        return max(0, remaining)
+        logging.info(
+            f"uuid={uuid} | server={base_url} | "
+            f"start={start_date.date()} | "
+            f"expiry={expiry_date.date()} | "
+            f"today={today} | "
+            f"remaining={remaining} дней"
+        )
+        
+        return remaining
         
     except Exception as e:
         logging.error(f"Ошибка получения дней для {uuid} на {base_url}: {str(e)}")

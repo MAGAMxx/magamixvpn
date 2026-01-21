@@ -339,22 +339,25 @@ def _get_remaining_from_server(uuid: str, base_url: str, api_key: str) -> int:
         data = r.json()
         
         package_days = data.get("package_days", 0)
-        if package_days == 0:
+        if package_days <= 0:
             return 0
             
         start_date_str = data.get("start_date")
-        if not start_date_str or start_date_str == "null":
-            return 0
-            
-        start_date = datetime.strptime(start_date_str, "%Y-%m-%d")
-        expiry_date = start_date + timedelta(days=package_days)
-        today = datetime.now().date()
-        remaining = (expiry_date - today).days
+        if not start_date_str or start_date_str in ("null", "", None):
+            return 0  
         
-        # Hiddify иногда даёт на 1 день больше — делаем как в панели
-        return max(0, remaining + 1)
+        start_date = datetime.strptime(start_date_str, "%Y-%m-%d").date()
+
+        expiry_date = start_date + timedelta(days=package_days)
+        
+        today = datetime.now().date()
+        
+        remaining = (expiry_date - today).days + 1 
+        
+        return max(0, remaining)
+        
     except Exception as e:
-        logging.error(f"Ошибка получения дней для {uuid} на {base_url}: {e}")
+        logging.error(f"Ошибка получения дней для {uuid} на {base_url}: {str(e)}")
         return 0
 
 # Главное меню

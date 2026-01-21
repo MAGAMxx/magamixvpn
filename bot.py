@@ -401,13 +401,22 @@ async def give_referral_bonus(referrer_id: int, referred_user_id: int):
     conn.close()
 
 def extend_or_create_subscription(user_id: int, added_days: int) -> dict | None:
-    subs = get_user_subscriptions(user_id)
-    if subs:
-        uuid = subs[0][0]
-        logging.info(f"Продлеваем существующую подписку для user {user_id}, uuid {uuid}, добавляем {added_days} дней")
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("""
+        SELECT uuid FROM subscriptions 
+        WHERE user_id = ? AND status = 'active' 
+        ORDER BY created_at DESC LIMIT 1
+    """, (user_id,))
+    existing = c.fetchone()
+    conn.close()
+    
+    if existing:
+        uuid = existing[0]
+        logging.info(f"Продлеваем существующую подписку для {user_id}: uuid={uuid}, +{added_days} дней")
         result = create_or_extend_both(added_days=added_days, user_id=user_id, existing_uuid=uuid)
     else:
-        logging.info(f"Создаём новую подписку для user {user_id}, на {added_days} дней")
+        logging.info(f"Новая подписка для {user_id}: {added_days} дней")
         result = create_or_extend_both(added_days=added_days, user_id=user_id)
     
     return result

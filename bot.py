@@ -762,6 +762,10 @@ async def check_free_sub(callback: CallbackQuery, state: FSMContext):
 async def install(callback: CallbackQuery):
     user_id = callback.from_user.id
     
+    # Автоматически чистим истёкшие подписки перед показом
+    cleanup_expired_subscriptions(user_id)
+    
+    # Получаем актуальный список активных подписок после очистки
     subs = get_user_subscriptions(user_id)
     
     if not subs:
@@ -775,7 +779,7 @@ async def install(callback: CallbackQuery):
         await callback.answer()
         return
     
-    text = "🗝️ Твои подписки:\n\nНажми на нужную, чтобы получить инструкцию по установке"
+    text = "🗝️ Твои активные подписки:\n\nНажми для установки"
     kb = []
     has_last_day = False
     
@@ -784,19 +788,16 @@ async def install(callback: CallbackQuery):
         
         if remaining_days == 1:
             has_last_day = True
-            
-        status_text = f" ({remaining_days} дней)"
-        if remaining_days <= 0:
-            status_text = " (истекла)"
         
-        button_text = f"🗝️ {uuid[:8]}...{status_text}"
+        # Показываем только с remaining > 0 (после очистки их не должно быть)
+        button_text = f"🗝️ {uuid[:8]}... ({remaining_days} дней)"
         kb.append([InlineKeyboardButton(
             text=button_text,
             callback_data=f"select_device_{uuid}"
         )])
     
     if has_last_day:
-        text += "\n\n⚠️ У одной из подписок остался последний день!\nРекомендуем продлить заранее."
+        text += "\n\n⚠️ У одной из подписок остался **последний день**!\nРекомендуем продлить заранее."
         kb.insert(0, [InlineKeyboardButton(text="💳 Продлить подписку", callback_data="pay")])
     
     kb.append([InlineKeyboardButton(text="🔙 Главное меню", callback_data="back_main")])

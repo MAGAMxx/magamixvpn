@@ -14,7 +14,6 @@ from yookassa import Configuration, Payment
 from yookassa.domain.notification import WebhookNotification
 from uuid import uuid4
 from aiohttp import web
-import time
 
 
 # ================== НАСТРОЙКИ ==================
@@ -184,24 +183,23 @@ def tarifs_menu():
 
 def create_or_extend_both(added_days: int, user_id: int, existing_uuid: str = None) -> dict | None:
     uuid = existing_uuid or str(uuid4())
-  
+   
     def process_server(base_url, api_key, client_path, server_name=""):
         nonlocal uuid
         headers = {"Hiddify-API-Key": api_key, "Content-Type": "application/json"}
         is_new = not existing_uuid
-      
+       
         if is_new:
             url = f"{base_url}/api/v2/admin/user/"
             payload = {
-                "name": f"tg_user_{user_id}",
+                "name": f"",
                 "package_days": added_days,
                 "usage_limit_GB": 150,
-                "mode": "no_reset",
-                "start_date": datetime.now().strftime("%Y-%m-%d")  # Пробуем сразу указать
+                "mode": "no_reset"
             }
             if server_name == "DE":
                 payload["uuid"] = uuid
-          
+           
             try:
                 r = requests.post(url, json=payload, headers=headers, timeout=15)
                 r.raise_for_status()
@@ -209,12 +207,11 @@ def create_or_extend_both(added_days: int, user_id: int, existing_uuid: str = No
                     new_uuid = r.json().get("uuid")
                     if new_uuid:
                         uuid = new_uuid
-                logging.info(f"Создан на {server_name}: {uuid}")
                 return True
             except Exception as e:
                 logging.error(f"Ошибка создания на {server_name}: {e}")
                 return False
-      
+       
         else:
             url = f"{base_url}/api/v2/admin/user/{uuid}/"
             try:
@@ -242,12 +239,12 @@ def create_or_extend_both(added_days: int, user_id: int, existing_uuid: str = No
             except Exception as e:
                 logging.error(f"Ошибка продления на {server_name} (uuid {uuid}): {e}")
                 return False
-  
+   
     if not process_server(HIDDIFY_ADMIN_PATH_NL, API_KEY_NL, HIDDIFY_CLIENT_PATH_NL, "NL"):
         return None
-  
+   
     process_server(HIDDIFY_ADMIN_PATH_DE, API_KEY_DE, HIDDIFY_CLIENT_PATH_DE, "DE")
-  
+   
     if not existing_uuid:
         conn = sqlite3.connect(DB_FILE)
         c = conn.cursor()
@@ -255,48 +252,39 @@ def create_or_extend_both(added_days: int, user_id: int, existing_uuid: str = No
         logging.info(f"ВСТАВКА НОВОЙ ПОДПИСКИ: user={user_id}, uuid={uuid}, created_at={created_at}, status=active")
         c.execute("""
             INSERT INTO subscriptions (user_id, uuid, created_at, status)
-            VALUES (?, ?, ?, 'active')
+            VALUES (?, ?, ?, 'active')  -- ЖЁСТКО 'active' без переменной!
         """, (user_id, uuid, created_at))
         conn.commit()
-        
+       
+        # Проверяем сразу после вставки
         c.execute("SELECT status FROM subscriptions WHERE uuid = ?", (uuid,))
         status_after = c.fetchone()[0]
         logging.info(f"СТАТУС СРАЗУ ПОСЛЕ ВСТАВКИ: {status_after}")
+       
         conn.close()
-    
-    # Активируем подписку явно (если start_date не установился при создании)
-    time.sleep(3)  # небольшая пауза
-    activate_hiddify_user(uuid, HIDDIFY_ADMIN_PATH_NL, API_KEY_NL, added_days)
-    activate_hiddify_user(uuid, HIDDIFY_ADMIN_PATH_DE, API_KEY_DE, added_days)
-    
-    time.sleep(5)  # ждём финальной синхронизации
-    
+   
     return {
         "nl": f"{DEEPLINK_BASE}{HIDDIFY_CLIENT_PATH_NL}/{uuid}/",
         "de": f"{DEEPLINK_BASE}{HIDDIFY_CLIENT_PATH_DE}/{uuid}/",
         "uuid": uuid
     }
-    
-def activate_hiddify_user(uuid: str, base_url: str, api_key: str, package_days: int) -> bool:
+
+def update_hiddify_comment(uuid: str, base_url: str, api_key: str, new_comment: str) -> bool:
     """
-    Активирует пользователя в Hiddify: устанавливает start_date на сегодня и package_days
+    Обновляет comment в Hiddify по UUID.
+    Возвращает True если успешно.
     """
     url = f"{base_url}/api/v2/admin/user/{uuid}/"
     headers = {"Hiddify-API-Key": api_key, "Content-Type": "application/json"}
-    
-    today_str = datetime.now().strftime("%Y-%m-%d")
-    payload = {
-        "start_date": today_str,
-        "package_days": package_days  # обязательно повторяем, чтобы активировать
-    }
-    
+    payload = {"comment": new_comment}
+  
     try:
         r = requests.patch(url, json=payload, headers=headers, timeout=10)
         r.raise_for_status()
-        logging.info(f"Пользователь {uuid} активирован на {base_url}: start_date={today_str}, days={package_days}")
+        logging.info(f"Comment обновлён для {uuid} на {base_url}")
         return True
     except Exception as e:
-        logging.error(f"Ошибка активации {uuid} на {base_url}: {e} | Ответ: {r.text if 'r' in locals() else 'нет ответа'}")
+        logging.error(f"Ошибка обновления comment {uuid} на {base_url}: {e}")
         return False
     
 def delete_hiddify_user(uuid: str, base_url: str, api_key: str) -> bool:
@@ -345,23 +333,13 @@ def cleanup_expired_subscriptions(user_id: int) -> None:
     conn.commit()
     conn.close()
 
-def get_remaining_days(uuid: str, max_attempts: int = 12, delay_sec: int = 8) -> int:
-    for attempt in range(1, max_attempts + 1):
-        remaining_nl = _get_remaining_from_server(uuid, HIDDIFY_ADMIN_PATH_NL, API_KEY_NL)
-        if remaining_nl > 0:
-            logging.info(f"Получено {remaining_nl} дней для {uuid} с NL (попытка {attempt})")
-            return remaining_nl
-        
-        remaining_de = _get_remaining_from_server(uuid, HIDDIFY_ADMIN_PATH_DE, API_KEY_DE)
-        if remaining_de > 0:
-            logging.info(f"Получено {remaining_de} дней для {uuid} с DE (попытка {attempt})")
-            return remaining_de
-        
-        logging.warning(f"Попытка {attempt}/{max_attempts}: remaining = 0 для {uuid}. Ждём {delay_sec} сек...")
-        time.sleep(delay_sec)
-    
-    logging.error(f"Не удалось получить дни для {uuid} после {max_attempts} попыток")
-    return 0
+def get_remaining_days(uuid: str) -> int:
+    # Сначала NL
+    remaining = _get_remaining_from_server(uuid, HIDDIFY_ADMIN_PATH_NL, API_KEY_NL)
+    if remaining > 0:
+        return remaining
+    # Если NL не дал — DE
+    return _get_remaining_from_server(uuid, HIDDIFY_ADMIN_PATH_DE, API_KEY_DE)
 
 
 def _get_remaining_from_server(uuid: str, base_url: str, api_key: str) -> int:
@@ -399,7 +377,7 @@ def _get_remaining_from_server(uuid: str, base_url: str, api_key: str) -> int:
     except Exception as e:
         logging.error(f"Ошибка получения дней для {uuid} на {base_url}: {str(e)}")
         return 0
-        
+
 # Главное меню
 async def send_main_menu(event, user_name, user_id):
     text = (
@@ -988,6 +966,7 @@ class AdminStates(StatesGroup):
     waiting_for_days = State()
     waiting_for_broadcast_text = State()
     waiting_for_search_query = State()  # новый для поиска пользователя
+    waiting_for_new_comment = State()   # новый для изменения комментария
 
 # Вспомогательная функция для кнопки "Назад в админку"
 def admin_back_kb():
@@ -1316,6 +1295,7 @@ async def show_user_menu(event, uid: int, uname: str = None):
         [InlineKeyboardButton(text="🔑 Просмотреть подписки", callback_data=f"view_subs_{uid}")],
         [InlineKeyboardButton(text="➕ Продлить (добавить дни)", callback_data=f"add_days_{uid}")],
         [InlineKeyboardButton(text="🗑️ Удалить подписку", callback_data=f"delete_subs_{uid}")],
+        [InlineKeyboardButton(text="✏️ Изменить комментарий в Hiddify", callback_data=f"edit_comment_{uid}")],
         [InlineKeyboardButton(text="🔙 Назад к списку", callback_data="admin_manage_users")]
     ]
     
@@ -1390,6 +1370,42 @@ async def confirm_delete(callback: CallbackQuery):
     await asyncio.sleep(1.5)
     await show_user_menu(callback, uid)
     await callback.answer()
+
+# Изменить комментарий
+@admin_router.callback_query(F.data.startswith("edit_comment_"))
+async def edit_comment_start(callback: CallbackQuery, state: FSMContext):
+    uid = int(callback.data.split("_")[2])
+    await state.update_data(target_user_id=uid)
+    await callback.message.edit_text(
+        f"Введите новый комментарий для Hiddify (применится ко всем подпискам пользователя {uid} на обоих серверах):",
+        reply_markup=admin_back_kb()
+    )
+    await state.set_state(AdminStates.waiting_for_new_comment)
+    await callback.answer()
+
+@admin_router.message(AdminStates.waiting_for_new_comment)
+async def process_new_comment(message: Message, state: FSMContext):
+    new_comment = message.text.strip()
+    data = await state.get_data()
+    uid = data['target_user_id']
+    subs = get_user_subscriptions(uid)
+    if not subs:
+        await message.answer("Нет активных подписок для обновления.")
+        await state.clear()
+        return
+    success = True
+    for uuid, _ in subs:
+        if not update_hiddify_comment(uuid, HIDDIFY_ADMIN_PATH_NL, API_KEY_NL, new_comment):
+            success = False
+        if not update_hiddify_comment(uuid, HIDDIFY_ADMIN_PATH_DE, API_KEY_DE, new_comment):
+            success = False
+    if success:
+        await message.delete()  # убираем сообщение с вводом комментария
+        await message.answer("Комментарий успешно обновлён на обоих серверах.")
+    else:
+       await message.answer("Ошибка обновления. Проверьте логи.")
+    await state.clear()
+    await show_user_menu(message, uid)
 
 async def main_menu():
     return InlineKeyboardMarkup(inline_keyboard=[

@@ -170,14 +170,13 @@ def tarifs_menu():
 
 def create_or_extend_both(added_days: int, user_id: int, existing_uuid: str = None) -> dict | None:
     uuid = existing_uuid or str(uuid4())
-
+    
     def process_server(base_url, api_key, client_path, server_name=""):
-        nonlocal uuid  # ← сразу в начале, чтобы можно было читать/писать uuid везде
+        nonlocal uuid
         headers = {"Hiddify-API-Key": api_key, "Content-Type": "application/json"}
         is_new = not existing_uuid
-
+        
         if is_new:
-            # Создание нового пользователя
             url = f"{base_url}/api/v2/admin/user/"
             payload = {
                 "name": f"tg_{user_id}",
@@ -186,10 +185,10 @@ def create_or_extend_both(added_days: int, user_id: int, existing_uuid: str = No
                 "mode": "no_reset"
             }
             if server_name == "DE":
-                payload["uuid"] = uuid  # явно задаём на DE
-
+                payload["uuid"] = uuid
+            
             try:
-                r = requests.post(url, json=payload, headers=headers, timeout=12)
+                r = requests.post(url, json=payload, headers=headers, timeout=15)
                 r.raise_for_status()
                 if server_name == "NL":
                     new_uuid = r.json().get("uuid")
@@ -199,63 +198,58 @@ def create_or_extend_both(added_days: int, user_id: int, existing_uuid: str = No
             except Exception as e:
                 logging.error(f"Ошибка создания на {server_name}: {e}")
                 return False
-
+        
         else:
-            # Продление существующего
             url = f"{base_url}/api/v2/admin/user/{uuid}/"
             try:
                 r_get = requests.get(url, headers=headers, timeout=10)
                 if r_get.status_code == 404:
-                    # Если нет — создаём как нового
                     return process_server(base_url, api_key, client_path, server_name)
                 r_get.raise_for_status()
                 data = r_get.json()
-
                 current_package = data.get("package_days", 0)
                 start_date_str = data.get("start_date")
                 remaining = 0
                 if start_date_str and start_date_str != "null":
                     start_date = datetime.strptime(start_date_str, "%Y-%m-%d")
                     remaining = (start_date + timedelta(days=current_package) - datetime.now()).days
-
                 new_package_days = current_package + added_days if remaining > 0 else added_days
-
                 payload = {
                     "package_days": new_package_days,
                     "name": f"tg_{user_id}",
                     "usage_limit_GB": 150,
                     "mode": "no_reset"
                 }
-                # Если подписка истекла — можно сбросить start_date (раскомментируй если нужно)
-                # if remaining <= 0:
-                #     payload["start_date"] = datetime.now().strftime("%Y-%m-%d")
-
                 r_patch = requests.patch(url, json=payload, headers=headers, timeout=12)
                 r_patch.raise_for_status()
                 return True
             except Exception as e:
                 logging.error(f"Ошибка продления на {server_name} (uuid {uuid}): {e}")
                 return False
-
-    # Основной сервер NL — критично
+    
     if not process_server(HIDDIFY_ADMIN_PATH_NL, API_KEY_NL, HIDDIFY_CLIENT_PATH_NL, "NL"):
         return None
-
-    # Вторичный DE — стараемся, но не прерываем если упадёт
+    
     process_server(HIDDIFY_ADMIN_PATH_DE, API_KEY_DE, HIDDIFY_CLIENT_PATH_DE, "DE")
-
-    # Сохраняем в БД только при создании новой подписки
+    
     if not existing_uuid:
         conn = sqlite3.connect(DB_FILE)
         c = conn.cursor()
         created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        logging.info(f"ВСТАВКА НОВОЙ ПОДПИСКИ: user={user_id}, uuid={uuid}, created_at={created_at}, status=active")
         c.execute("""
             INSERT INTO subscriptions (user_id, uuid, created_at, status)
             VALUES (?, ?, ?, ?)
         """, (user_id, uuid, created_at, "active"))
         conn.commit()
+        
+        # Проверяем сразу после вставки
+        c.execute("SELECT status FROM subscriptions WHERE uuid = ?", (uuid,))
+        status_after = c.fetchone()[0]
+        logging.info(f"СТАТУС СРАЗУ ПОСЛЕ ВСТАВКИ: {status_after}")
+        
         conn.close()
-
+    
     return {
         "nl": f"{DEEPLINK_BASE}{HIDDIFY_CLIENT_PATH_NL}/{uuid}/",
         "de": f"{DEEPLINK_BASE}{HIDDIFY_CLIENT_PATH_DE}/{uuid}/",
@@ -283,28 +277,31 @@ def delete_hiddify_user(uuid: str, base_url: str, api_key: str) -> bool:
         return False
 
 def cleanup_expired_subscriptions(user_id: int) -> None:
-    """
-    Проверяет все подписки пользователя и удаляет истёкшие (0 дней).
-    """
     subs = get_user_subscriptions(user_id)
     if not subs:
         return
-
+    
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
-
+    
     for uuid, created_at in subs:
+        created_at_dt = datetime.strptime(created_at, "%Y-%m-%d %H:%M:%S")
+        age_minutes = (datetime.now() - created_at_dt).total_seconds() / 60
+        
+        # Если подписка младше 5 минут — не трогаем, даём Hiddify время
+        if age_minutes < 5:
+            logging.info(f"Подписка {uuid} новая ({age_minutes:.1f} мин) — пропускаем очистку")
+            continue
+        
         remaining = get_remaining_days(uuid)
         if remaining <= 0:
-            # Удаляем в Hiddify (оба сервера)
             delete_hiddify_user(uuid, HIDDIFY_ADMIN_PATH_NL, API_KEY_NL)
             delete_hiddify_user(uuid, HIDDIFY_ADMIN_PATH_DE, API_KEY_DE)
             
-            # Помечаем в БД как истёкшую (лучше не удалять запись, а менять статус)
             c.execute("UPDATE subscriptions SET status = 'expired' WHERE uuid = ? AND user_id = ?",
                       (uuid, user_id))
             logging.info(f"Подписка {uuid} для user {user_id} истекла и помечена как expired")
-
+    
     conn.commit()
     conn.close()
 
@@ -406,10 +403,13 @@ async def give_referral_bonus(referrer_id: int, referred_user_id: int):
 def extend_or_create_subscription(user_id: int, added_days: int) -> dict | None:
     subs = get_user_subscriptions(user_id)
     if subs:
-        uuid = subs[0][0]  # только uuid
+        uuid = subs[0][0]
+        logging.info(f"Продлеваем существующую подписку для user {user_id}, uuid {uuid}, добавляем {added_days} дней")
         result = create_or_extend_both(added_days=added_days, user_id=user_id, existing_uuid=uuid)
     else:
+        logging.info(f"Создаём новую подписку для user {user_id}, на {added_days} дней")
         result = create_or_extend_both(added_days=added_days, user_id=user_id)
+    
     return result
 
 
@@ -639,18 +639,19 @@ async def pre_checkout_handler(pre_checkout_query: PreCheckoutQuery):
 async def successful_stars_payment(message: types.Message):
     payment = message.successful_payment
     user_id = message.from_user.id
-    
-    # Разбираем payload
+   
     try:
         _, uid_str, tarif_name, days_str = payment.invoice_payload.split("_")
         days = int(days_str)
     except:
         days = 7  # fallback
-        
-    # Выдаём подписку
+       
     result = extend_or_create_subscription(user_id, days)
-    
+   
     if result:
+        # Даём время Hiddify синхронизировать данные
+        await asyncio.sleep(10)
+        
         text = (
             f"🎉 Оплата через ⭐ Stars прошла успешно!\n\n"
             f"Добавлено **+{days} дней** к подписке!\n"
@@ -660,10 +661,9 @@ async def successful_stars_payment(message: types.Message):
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="📲 Главное меню", callback_data="back_main")]
         ])
-        
+       
         await message.answer(text, reply_markup=kb, parse_mode="Markdown")
-        
-        # Уведомление админу
+       
         await bot.send_message(
             ADMIN_ID,
             f"⭐ НОВАЯ ОПЛАТА Stars!\n"
@@ -672,10 +672,6 @@ async def successful_stars_payment(message: types.Message):
         )
     else:
         await message.answer("✅ Оплата прошла, но ошибка выдачи доступа. Напишите в поддержку.")
-
-
-
-
 
 # Бесплатные 3 дня
 @dp.callback_query(F.data == "free_3days")

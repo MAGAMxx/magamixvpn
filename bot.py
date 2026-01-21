@@ -289,7 +289,7 @@ def cleanup_expired_subscriptions(user_id: int) -> None:
         age_minutes = (datetime.now() - created_at_dt).total_seconds() / 60
         
         # Если подписка младше 5 минут — не трогаем, даём Hiddify время
-        if age_minutes < 5:
+        if age_minutes < 10:
             logging.info(f"Подписка {uuid} новая ({age_minutes:.1f} мин) — пропускаем очистку")
             continue
         
@@ -712,15 +712,12 @@ async def check_free_sub(callback: CallbackQuery, state: FSMContext):
 async def install(callback: CallbackQuery):
     user_id = callback.from_user.id
     
-    subs = get_user_subscriptions(user_id)
+    # Даём время Hiddify обновить данные после создания/оплаты
+    await asyncio.sleep(10)  # 10 секунд — надёжно
     
-    # Даём время Hiddify обновить данные после создания (если оплата была только что)
-    await asyncio.sleep(8)  # 8 секунд — оптимально
-    
-    # Только теперь чистим истёкшие
+    # Чистим истёкшие (с проверкой возраста — новые не тронет)
     cleanup_expired_subscriptions(user_id)
     
-    # Перечитываем подписки после очистки
     subs = get_user_subscriptions(user_id)
     
     if not subs:
@@ -744,14 +741,10 @@ async def install(callback: CallbackQuery):
         
         if remaining_days == 1:
             has_last_day = True
-        elif remaining_days <= 0:
-            # Дополнительная защита
-            conn = sqlite3.connect(DB_FILE)
-            c = conn.cursor()
-            c.execute("UPDATE subscriptions SET status = 'expired' WHERE uuid = ?", (uuid,))
-            conn.commit()
-            conn.close()
-            continue
+        
+        # Убрали лишнюю пометку 'expired' — cleanup уже всё сделал
+        if remaining_days <= 0:
+            continue  # просто не показываем
         
         fake_code = random.randint(100000, 999999)
         button_text = f"🗝️{fake_code} ({remaining_days} дней)"

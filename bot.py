@@ -91,6 +91,8 @@ DB_FILE = "users.db"
 def init_db():
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
+    
+    # Создаём таблицы, если нет
     c.execute('''
         CREATE TABLE IF NOT EXISTS users (
             user_id INTEGER PRIMARY KEY,
@@ -107,8 +109,7 @@ def init_db():
             tarif TEXT,
             days INTEGER,
             created_at TEXT,
-            status TEXT DEFAULT 'pending',
-            metadata TEXT  -- ← добавлен этот столбец
+            status TEXT DEFAULT 'pending'
         )
     ''')
     c.execute('''
@@ -120,6 +121,17 @@ def init_db():
             status TEXT DEFAULT 'active'
         )
     ''')
+    
+    # Миграция: добавляем metadata, если столбца нет
+    try:
+        c.execute("ALTER TABLE payments ADD COLUMN metadata TEXT")
+        logging.info("Добавлен столбец metadata в таблицу payments")
+    except sqlite3.OperationalError as e:
+        if "duplicate column name" in str(e):
+            pass  # столбец уже есть
+        else:
+            raise e
+    
     conn.commit()
     conn.close()
 

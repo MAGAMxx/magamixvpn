@@ -649,9 +649,7 @@ async def successful_stars_payment(message: types.Message):
     result = extend_or_create_subscription(user_id, days)
    
     if result:
-        # Даём время Hiddify синхронизировать данные
-        await asyncio.sleep(10)
-        
+        await asyncio.sleep(8)  # даём Hiddify время
         text = (
             f"🎉 Оплата через ⭐ Stars прошла успешно!\n\n"
             f"Добавлено **+{days} дней** к подписке!\n"
@@ -661,9 +659,8 @@ async def successful_stars_payment(message: types.Message):
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="📲 Главное меню", callback_data="back_main")]
         ])
-       
         await message.answer(text, reply_markup=kb, parse_mode="Markdown")
-       
+    
         await bot.send_message(
             ADMIN_ID,
             f"⭐ НОВАЯ ОПЛАТА Stars!\n"
@@ -715,9 +712,15 @@ async def check_free_sub(callback: CallbackQuery, state: FSMContext):
 async def install(callback: CallbackQuery):
     user_id = callback.from_user.id
     
-    # Сначала чистим истёкшие подписки
+    subs = get_user_subscriptions(user_id)
+    
+    # Даём время Hiddify обновить данные после создания (если оплата была только что)
+    await asyncio.sleep(8)  # 8 секунд — оптимально
+    
+    # Только теперь чистим истёкшие
     cleanup_expired_subscriptions(user_id)
     
+    # Перечитываем подписки после очистки
     subs = get_user_subscriptions(user_id)
     
     if not subs:
@@ -734,7 +737,6 @@ async def install(callback: CallbackQuery):
     warning_text = ""
     
     kb = []
-    
     has_last_day = False
     
     for uuid, created_at in subs:
@@ -743,13 +745,13 @@ async def install(callback: CallbackQuery):
         if remaining_days == 1:
             has_last_day = True
         elif remaining_days <= 0:
-            # На всякий случай ещё раз пометим (хотя cleanup уже должен был)
+            # Дополнительная защита
             conn = sqlite3.connect(DB_FILE)
             c = conn.cursor()
             c.execute("UPDATE subscriptions SET status = 'expired' WHERE uuid = ?", (uuid,))
             conn.commit()
             conn.close()
-            continue  # не показываем истёкшие
+            continue
         
         fake_code = random.randint(100000, 999999)
         button_text = f"🗝️{fake_code} ({remaining_days} дней)"
@@ -758,7 +760,6 @@ async def install(callback: CallbackQuery):
             callback_data=f"select_device_{uuid}"
         )])
     
-    # Добавляем предупреждение, если есть подписка на 1 день
     if has_last_day:
         warning_text = "\n\n⚠️ У одной из подписок остался **последний день**!\nРекомендуем продлить заранее."
         kb.insert(0, [InlineKeyboardButton(text="💳 Продлить подписку", callback_data="pay")])
@@ -1144,6 +1145,7 @@ async def check_payments():
                 if payment.status == 'succeeded':
                     result = extend_or_create_subscription(user_id, days)
                     if result:
+                        await asyncio.sleep(8)
                         await bot.send_message(
                             user_id,
                             f"🎉 Оплата через ЮKassa прошла успешно!\n\n"

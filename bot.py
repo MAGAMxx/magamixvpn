@@ -333,13 +333,28 @@ def cleanup_expired_subscriptions(user_id: int) -> None:
     conn.commit()
     conn.close()
 
-def get_remaining_days(uuid: str) -> int:
-    # Сначала NL
-    remaining = _get_remaining_from_server(uuid, HIDDIFY_ADMIN_PATH_NL, API_KEY_NL)
-    if remaining > 0:
-        return remaining
-    # Если NL не дал — DE
-    return _get_remaining_from_server(uuid, HIDDIFY_ADMIN_PATH_DE, API_KEY_DE)
+def get_remaining_days(uuid: str, max_attempts: int = 5, delay_sec: int = 3) -> int:
+    """
+    Получает оставшиеся дни с повторными попытками (Hiddify может не сразу обновить данные)
+    """
+    for attempt in range(1, max_attempts + 1):
+        # Сначала NL
+        remaining = _get_remaining_from_server(uuid, HIDDIFY_ADMIN_PATH_NL, API_KEY_NL)
+        if remaining > 0:
+            logging.info(f"Получено {remaining} дней для {uuid} с NL (попытка {attempt})")
+            return remaining
+        
+        # Если NL не дал — DE
+        remaining = _get_remaining_from_server(uuid, HIDDIFY_ADMIN_PATH_DE, API_KEY_DE)
+        if remaining > 0:
+            logging.info(f"Получено {remaining} дней для {uuid} с DE (попытка {attempt})")
+            return remaining
+        
+        logging.warning(f"Попытка {attempt}/{max_attempts}: remaining = 0 для {uuid}. Ждём {delay_sec} сек...")
+        asyncio.sleep(delay_sec)  # ждём перед следующей попыткой
+    
+    logging.error(f"Не удалось получить дни для {uuid} после {max_attempts} попыток")
+    return 0
 
 
 def _get_remaining_from_server(uuid: str, base_url: str, api_key: str) -> int:

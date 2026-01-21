@@ -261,7 +261,53 @@ def create_or_extend_both(added_days: int, user_id: int, existing_uuid: str = No
         "de": f"{DEEPLINK_BASE}{HIDDIFY_CLIENT_PATH_DE}/{uuid}/",
         "uuid": uuid
     }
+
+def delete_hiddify_user(uuid: str, base_url: str, api_key: str) -> bool:
+    """
+    Удаляет пользователя в Hiddify по UUID.
+    Возвращает True если успешно.
+    """
+    url = f"{base_url}/api/v2/admin/user/{uuid}/"
+    headers = {"Hiddify-API-Key": api_key, "Content-Type": "application/json"}
     
+    try:
+        r = requests.delete(url, headers=headers, timeout=10)
+        if r.status_code in (200, 204, 404):  # 404 тоже ок — уже удалён
+            logging.info(f"Пользователь {uuid} удалён на {base_url}")
+            return True
+        else:
+            logging.error(f"Ошибка удаления {uuid} на {base_url}: {r.status_code} {r.text}")
+            return False
+    except Exception as e:
+        logging.error(f"Исключение при удалении {uuid} на {base_url}: {e}")
+        return False
+
+def cleanup_expired_subscriptions(user_id: int) -> None:
+    """
+    Проверяет все подписки пользователя и удаляет истёкшие (0 дней).
+    """
+    subs = get_user_subscriptions(user_id)
+    if not subs:
+        return
+
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+
+    for uuid, created_at in subs:
+        remaining = get_remaining_days(uuid)
+        if remaining <= 0:
+            # Удаляем в Hiddify (оба сервера)
+            delete_hiddify_user(uuid, HIDDIFY_ADMIN_PATH_NL, API_KEY_NL)
+            delete_hiddify_user(uuid, HIDDIFY_ADMIN_PATH_DE, API_KEY_DE)
+            
+            # Помечаем в БД как истёкшую (лучше не удалять запись, а менять статус)
+            c.execute("UPDATE subscriptions SET status = 'expired' WHERE uuid = ? AND user_id = ?",
+                      (uuid, user_id))
+            logging.info(f"Подписка {uuid} для user {user_id} истекла и помечена как expired")
+
+    conn.commit()
+    conn.close()
+
 def get_remaining_days(uuid: str) -> int:
     # Сначала NL
     remaining = _get_remaining_from_server(uuid, HIDDIFY_ADMIN_PATH_NL, API_KEY_NL)
@@ -365,6 +411,17 @@ def extend_or_create_subscription(user_id: int, added_days: int) -> dict | None:
     else:
         result = create_or_extend_both(added_days=added_days, user_id=user_id)
     return result
+
+
+async def cleanup_all_expired():
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("SELECT DISTINCT user_id FROM subscriptions WHERE status = 'active'")
+    user_ids = [row[0] for row in c.fetchall()]
+    conn.close()
+    
+    for uid in user_ids:
+        cleanup_expired_subscriptions(uid)
     
 
 # Старт
@@ -661,37 +718,60 @@ async def check_free_sub(callback: CallbackQuery, state: FSMContext):
 @dp.callback_query(F.data == "install")
 async def install(callback: CallbackQuery):
     user_id = callback.from_user.id
+    
+    # Сначала чистим истёкшие подписки
+    cleanup_expired_subscriptions(user_id)
+    
     subs = get_user_subscriptions(user_id)
-   
+    
     if not subs:
-        text = "У тебя нет активных подписок.\n\nОформи тариф или возьми 3 дня бесплатно!"
+        text = "У тебя нет активных подписок.\n\nОформи тариф или пригласи друзей!"
         kb = [
             [InlineKeyboardButton(text="💳 Оплатить VPN", callback_data="pay")],
-            [InlineKeyboardButton(text="🎁 Бесплатно 3 дня", callback_data="free_3days")],
+            [InlineKeyboardButton(text="👥 Пригласить друзей", callback_data="referral")],
             [InlineKeyboardButton(text="🔙 Главное меню", callback_data="back_main")]
         ]
         await callback.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
         return
-   
+    
     text = "🗝️Ваши активные подписки:\n\n✅Нажмите для установки"
-   
+    warning_text = ""
+    
     kb = []
-   
-    # БД больше не нужна здесь!
-    for uuid, created_at in subs:  # ← ровно два значения
+    
+    has_last_day = False
+    
+    for uuid, created_at in subs:
         remaining_days = get_remaining_days(uuid)
-       
+        
+        if remaining_days == 1:
+            has_last_day = True
+        elif remaining_days <= 0:
+            # На всякий случай ещё раз пометим (хотя cleanup уже должен был)
+            conn = sqlite3.connect(DB_FILE)
+            c = conn.cursor()
+            c.execute("UPDATE subscriptions SET status = 'expired' WHERE uuid = ?", (uuid,))
+            conn.commit()
+            conn.close()
+            continue  # не показываем истёкшие
+        
         fake_code = random.randint(100000, 999999)
         button_text = f"🗝️{fake_code} ({remaining_days} дней)"
-       
         kb.append([InlineKeyboardButton(
             text=button_text,
             callback_data=f"select_device_{uuid}"
         )])
-   
+    
+    # Добавляем предупреждение, если есть подписка на 1 день
+    if has_last_day:
+        warning_text = "\n\n⚠️ У одной из подписок остался **последний день**!\nРекомендуем продлить заранее."
+        kb.insert(0, [InlineKeyboardButton(text="💳 Продлить подписку", callback_data="pay")])
+    
     kb.append([InlineKeyboardButton(text="🔙 Главное меню", callback_data="back_main")])
-   
-    await callback.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+    
+    full_text = text + warning_text
+    
+    await callback.message.edit_text(full_text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
 
 @dp.callback_query(F.data.startswith("select_device_"))
 async def select_device(callback: CallbackQuery):
@@ -1088,13 +1168,52 @@ async def check_payments():
         conn.close()
         await asyncio.sleep(60)  # проверка каждую минуту
 
+async def periodical_cleanup():
+    """
+    Периодически (раз в час) проверяет и удаляет все истёкшие подписки у всех пользователей.
+    """
+    while True:
+        try:
+            # Получаем всех пользователей с активными подписками
+            conn = sqlite3.connect(DB_FILE)
+            c = conn.cursor()
+            c.execute("SELECT DISTINCT user_id FROM subscriptions WHERE status = 'active'")
+            user_ids = [row[0] for row in c.fetchall()]
+            conn.close()
+
+            # Чистим для каждого пользователя
+            for uid in user_ids:
+                cleanup_expired_subscriptions(uid)  # ← твоя функция из предыдущего ответа
+
+            logging.info(f"Периодическая очистка завершена. Обработано пользователей: {len(user_ids)}")
+
+        except Exception as e:
+            logging.error(f"Ошибка в periodical_cleanup: {e}", exc_info=True)
+
+        # Ждём 1 час (3600 секунд)
+        await asyncio.sleep(3600)
+
 async def main():
-    logging.basicConfig(level=logging.INFO)
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(levelname)s - %(message)s',
+        handlers=[
+            logging.FileHandler("bot.log"),    # логи в файл
+            logging.StreamHandler()            # и в консоль
+        ]
+    )
+    
     print("🚀 Бот запущен")
+    
+    # Запускаем фоновые задачи
     asyncio.create_task(check_payments())
+    asyncio.create_task(periodical_cleanup())  # ← новая задача очистки
+    
+    # Запускаем polling
     await dp.start_polling(
         bot,
         drop_pending_updates=True
     )
+
 if __name__ == "__main__":
     asyncio.run(main())

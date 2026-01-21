@@ -746,25 +746,25 @@ async def check_free_sub(callback: CallbackQuery, state: FSMContext):
 async def install(callback: CallbackQuery):
     user_id = callback.from_user.id
     
-    # Минимальная задержка — только чтобы Hiddify успел после оплаты
-    await asyncio.sleep(1)
-    
     subs = get_user_subscriptions(user_id)
     
     if not subs:
-        text = "У тебя нет активных подписок.\n\nОформи тариф или пригласи друзей!"
+        text = "У тебя пока нет активных подписок.\n\nОформи тариф или пригласи друзей!"
         kb = [
             [InlineKeyboardButton(text="💳 Оплатить VPN", callback_data="pay")],
             [InlineKeyboardButton(text="👥 Пригласить друзей", callback_data="referral")],
             [InlineKeyboardButton(text="🔙 Главное меню", callback_data="back_main")]
         ]
         await callback.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+        await callback.answer()
         return
     
-    text = "🗝️Ваши активные подписки:\n\n✅Нажмите для установки"
+    # Есть подписки → показываем их все
+    text = "🗝️ Твои подписки:\n\nНажми на нужную, чтобы получить инструкцию по установке"
     warning_text = ""
     
     kb = []
+    has_expired = False
     has_last_day = False
     
     for uuid, created_at in subs:
@@ -772,26 +772,40 @@ async def install(callback: CallbackQuery):
         
         if remaining_days == 1:
             has_last_day = True
-        
         if remaining_days <= 0:
-            continue
+            has_expired = True
         
-        fake_code = random.randint(100000, 999999)
-        button_text = f"🗝️ {uuid[:8]}... ({remaining_days} дней)"
+        status_text = f" ({remaining_days} дней)"
+        if remaining_days <= 0:
+            status_text = " (истекла)"
+        
+        button_text = f"🗝️ {uuid[:8]}...{status_text}"
+        
         kb.append([InlineKeyboardButton(
             text=button_text,
             callback_data=f"select_device_{uuid}"
         )])
     
+    # Предупреждения
+    if has_expired:
+        warning_text += "\n\n⚠️ Некоторые подписки уже истекли — их нужно продлить!"
     if has_last_day:
-        warning_text = "\n\n⚠️ У одной из подписок остался **последний день**!\nРекомендуем продлить заранее."
+        warning_text += "\n\n⚠️ У одной из подписок остался последний день — продли заранее!"
+    
+    if warning_text:
+        text += warning_text
+    
+    # Кнопка продления всегда видна, если есть истекшие или мало дней
+    if has_expired or has_last_day:
         kb.insert(0, [InlineKeyboardButton(text="💳 Продлить подписку", callback_data="pay")])
     
     kb.append([InlineKeyboardButton(text="🔙 Главное меню", callback_data="back_main")])
     
-    full_text = text + warning_text
-    
-    await callback.message.edit_text(full_text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+    await callback.message.edit_text(
+        text,
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=kb)
+    )
+    await callback.answer()
 
 @dp.callback_query(F.data.startswith("select_device_"))
 async def select_device(callback: CallbackQuery):

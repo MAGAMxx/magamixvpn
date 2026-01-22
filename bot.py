@@ -182,93 +182,151 @@ def tarifs_menu():
     return InlineKeyboardMarkup(inline_keyboard=kb)
 
 def create_or_extend_both(added_days: int, user_id: int, existing_uuid: str = None) -> dict | None:
+    """
+    Создаёт новую подписку или продлевает существующую на обоих серверах.
+    Всегда добавляет дни к текущему package_days (не заменяет).
+    Работает корректно при start_date = None (режим no_reset).
+    """
     uuid = existing_uuid or str(uuid4())
-   
-    def process_server(base_url, api_key, client_path, server_name=""):
+    
+    def process_server(base_url: str, api_key: str, client_path: str, server_name: str = "") -> bool:
         nonlocal uuid
         headers = {"Hiddify-API-Key": api_key, "Content-Type": "application/json"}
         is_new = not existing_uuid
-       
+        
         if is_new:
+            # Создание нового пользователя
             url = f"{base_url}/api/v2/admin/user/"
             payload = {
-                "name": f"",
+                "name": "",
                 "package_days": added_days,
                 "usage_limit_GB": 150,
                 "mode": "no_reset"
             }
             if server_name == "DE":
-                payload["uuid"] = uuid
-           
+                payload["uuid"] = uuid  # для DE можно явно указывать uuid
+            
             try:
                 r = requests.post(url, json=payload, headers=headers, timeout=15)
                 r.raise_for_status()
+                
                 if server_name == "NL":
+                    # NL возвращает новый uuid
                     new_uuid = r.json().get("uuid")
                     if new_uuid:
                         uuid = new_uuid
+                        logging.info(f"Создан новый пользователь на NL, uuid={uuid}")
+                
+                logging.info(f"Создание на {server_name}: {added_days} дней, uuid={uuid}")
                 return True
+            
             except Exception as e:
-                logging.error(f"Ошибка создания на {server_name}: {e}")
+                logging.error(f"Ошибка создания на {server_name}: {e}", exc_info=True)
                 return False
-       
+        
         else:
+            # Продление существующей подписки
             url = f"{base_url}/api/v2/admin/user/{uuid}/"
             try:
                 r_get = requests.get(url, headers=headers, timeout=10)
+                
                 if r_get.status_code == 404:
+                    # Пользователь не найден → создаём заново
+                    logging.warning(f"Пользователь {uuid} не найден на {server_name} → создаём")
                     return process_server(base_url, api_key, client_path, server_name)
+                
                 r_get.raise_for_status()
                 data = r_get.json()
+                
                 current_package = data.get("package_days", 0)
                 start_date_str = data.get("start_date")
+                
+                # Вычисляем remaining (только для лога)
                 remaining = 0
-                if start_date_str and start_date_str != "null":
-                    start_date = datetime.strptime(start_date_str, "%Y-%m-%d")
-                    remaining = (start_date + timedelta(days=current_package) - datetime.now()).days
-                new_package_days = current_package + added_days if remaining > 0 else added_days
+                if start_date_str and start_date_str not in ("null", "", None):
+                    try:
+                        start_date = datetime.strptime(start_date_str, "%Y-%m-%d")
+                        expiry = start_date + timedelta(days=current_package)
+                        remaining = max(0, (expiry - datetime.now()).days)
+                    except ValueError as ve:
+                        logging.warning(f"Неверный формат start_date '{start_date_str}' на {server_name}: {ve}")
+                        remaining = 0
+                
+                else:
+                    # Нет start_date → в no_reset считаем текущий пакет "оставшимся"
+                    remaining = current_package if current_package > 0 else 0
+                
+                # Всегда добавляем дни (главное исправление!)
+                new_package_days = current_package + added_days
+                
                 payload = {
                     "package_days": new_package_days,
-                    "name": f"",
+                    "name": "",  # оставляем пустым
                     "usage_limit_GB": 150,
                     "mode": "no_reset"
                 }
+                
                 r_patch = requests.patch(url, json=payload, headers=headers, timeout=12)
                 r_patch.raise_for_status()
+                
+                logging.info(
+                    f"Продление на {server_name}: "
+                    f"{current_package} → {new_package_days} "
+                    f"(remaining считался как {remaining}, start_date={start_date_str})"
+                )
                 return True
-            except Exception as e:
-                logging.error(f"Ошибка продления на {server_name} (uuid {uuid}): {e}")
+            
+            except requests.exceptions.RequestException as req_err:
+                logging.error(f"Сетевая ошибка продления на {server_name} (uuid {uuid}): {req_err}")
                 return False
-   
+            except Exception as e:
+                logging.error(f"Неизвестная ошибка продления на {server_name} (uuid {uuid}): {e}", exc_info=True)
+                return False
+    
+    # ──────────────────────────────────────────────────────────────
+    # Основная логика вызова
+    # ──────────────────────────────────────────────────────────────
+    
+    # Сначала основной сервер (NL) — если он не прошёл → ничего не делаем
     if not process_server(HIDDIFY_ADMIN_PATH_NL, API_KEY_NL, HIDDIFY_CLIENT_PATH_NL, "NL"):
+        logging.error(f"Не удалось обработать основной сервер NL для user={user_id}")
         return None
-   
+    
+    # Вторичный сервер (DE) — пробуем, но даже если не получится — продолжаем
     process_server(HIDDIFY_ADMIN_PATH_DE, API_KEY_DE, HIDDIFY_CLIENT_PATH_DE, "DE")
-   
+    
+    # Если это новая подписка — сохраняем в БД
     if not existing_uuid:
-        conn = sqlite3.connect(DB_FILE)
-        c = conn.cursor()
-        created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        logging.info(f"ВСТАВКА НОВОЙ ПОДПИСКИ: user={user_id}, uuid={uuid}, created_at={created_at}, status=active")
-        c.execute("""
-            INSERT INTO subscriptions (user_id, uuid, created_at, status)
-            VALUES (?, ?, ?, 'active')  -- ЖЁСТКО 'active' без переменной!
-        """, (user_id, uuid, created_at))
-        conn.commit()
-       
-        # Проверяем сразу после вставки
-        c.execute("SELECT status FROM subscriptions WHERE uuid = ?", (uuid,))
-        status_after = c.fetchone()[0]
-        logging.info(f"СТАТУС СРАЗУ ПОСЛЕ ВСТАВКИ: {status_after}")
-       
-        conn.close()
-   
+        try:
+            conn = sqlite3.connect(DB_FILE)
+            c = conn.cursor()
+            created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            
+            logging.info(f"ВСТАВКА НОВОЙ ПОДПИСКИ: user={user_id}, uuid={uuid}, created_at={created_at}")
+            
+            c.execute("""
+                INSERT INTO subscriptions (user_id, uuid, created_at, status)
+                VALUES (?, ?, ?, 'active')
+            """, (user_id, uuid, created_at))
+            conn.commit()
+            
+            # Проверка вставки
+            c.execute("SELECT status FROM subscriptions WHERE uuid = ?", (uuid,))
+            status_after = c.fetchone()[0]
+            logging.info(f"СТАТУС СРАЗУ ПОСЛЕ ВСТАВКИ: {status_after}")
+            
+        except Exception as db_err:
+            logging.error(f"Ошибка записи новой подписки в БД для user={user_id}: {db_err}")
+        finally:
+            conn.close()
+    
+    # Возвращаем ссылки (даже если DE не прошёл — NL должен работать)
     return {
         "nl": f"{DEEPLINK_BASE}{HIDDIFY_CLIENT_PATH_NL}/{uuid}/",
         "de": f"{DEEPLINK_BASE}{HIDDIFY_CLIENT_PATH_DE}/{uuid}/",
         "uuid": uuid
     }
-
+    
 def update_hiddify_comment(uuid: str, base_url: str, api_key: str, new_comment: str) -> bool:
     """
     Обновляет comment в Hiddify по UUID.

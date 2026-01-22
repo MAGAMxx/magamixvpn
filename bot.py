@@ -1372,6 +1372,42 @@ async def add_days_start(callback: CallbackQuery, state: FSMContext):
     await state.set_state(AdminStates.waiting_for_days)
     await callback.answer()
 
+@admin_router.message(AdminStates.waiting_for_days)
+async def process_added_days(message: Message, state: FSMContext):
+    if not message.text.isdigit():
+        await message.answer("Пожалуйста, введите число (количество дней).")
+        return
+    
+    days = int(message.text.strip())
+    if days <= 0:
+        await message.answer("Количество дней должно быть положительным числом.")
+        return
+    
+    data = await state.get_data()
+    target_user_id = data.get('target_user_id')
+    
+    if not target_user_id:
+        await message.answer("Ошибка: пользователь не найден. Начните заново.")
+        await state.clear()
+        return
+    
+    # Здесь логика продления — используй твою функцию
+    result = create_or_extend_both(added_days=days, user_id=target_user_id)
+    
+    if result:
+        await message.answer(f"Успешно добавлено {days} дней пользователю {target_user_id}!")
+        await bot.send_message(
+            ADMIN_ID,
+            f"Админ добавил {days} дней пользователю {target_user_id}"
+        )
+    else:
+        await message.answer(f"Ошибка при добавлении дней пользователю {target_user_id}. Проверь логи.")
+    
+    await state.clear()
+    
+    # Возвращаем в меню пользователя
+    await show_user_menu(message, target_user_id)
+
 # Удалить подписку (все активные)
 @admin_router.callback_query(F.data.startswith("delete_subs_"))
 async def delete_subs_confirm(callback: CallbackQuery):

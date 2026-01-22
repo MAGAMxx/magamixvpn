@@ -229,7 +229,7 @@ def create_or_extend_both(added_days: int, user_id: int, existing_uuid: str = No
                 new_package_days = current_package + added_days if remaining > 0 else added_days
                 payload = {
                     "package_days": new_package_days,
-                    "name": f"tg_user_{user_id}",
+                    "name": f"",
                     "usage_limit_GB": 150,
                     "mode": "no_reset"
                 }
@@ -1513,7 +1513,7 @@ async def check_payments():
             except Exception as e:
                 logging.error(f"Ошибка проверки платежа {payment_id}: {e}")
         conn.close()
-        await asyncio.sleep(60)  # проверка каждую минуту
+        await asyncio.sleep(30)  # проверка каждую минуту
 
 async def periodical_cleanup():
     """

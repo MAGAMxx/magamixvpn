@@ -394,22 +394,15 @@ def cleanup_expired_subscriptions(user_id: int) -> None:
     conn.close()
 
 def get_remaining_days(uuid: str) -> int:
-    # Просто берём package_days с первого доступного сервера
-    for base_url, api_key in [
-        (HIDDIFY_ADMIN_PATH_NL, API_KEY_NL),
-        (HIDDIFY_ADMIN_PATH_DE, API_KEY_DE)
-    ]:
-        try:
-            url = f"{base_url}/api/v2/admin/user/{uuid}/"
-            r = requests.get(url, headers={"Hiddify-API-Key": api_key}, timeout=8)
-            if r.status_code == 200:
-                pd = r.json().get("package_days", 0)
-                logging.info(f"uuid={uuid} → package_days = {pd} с {base_url}")
-                return pd
-        except Exception as e:
-            logging.warning(f"Ошибка получения package_days с {base_url}: {e}")
+    remaining_nl = _get_remaining_from_server(uuid, HIDDIFY_ADMIN_PATH_NL, API_KEY_NL)
+    logging.info(f"[Remaining NL] uuid={uuid} → {remaining_nl} дней")
     
-    return 0
+    if remaining_nl > 0:
+        return remaining_nl
+    
+    remaining_de = _get_remaining_from_server(uuid, HIDDIFY_ADMIN_PATH_DE, API_KEY_DE)
+    logging.info(f"[Remaining DE] uuid={uuid} → {remaining_de} дней")
+    return remaining_de
 
 
 def _get_remaining_from_server(uuid: str, base_url: str, api_key: str) -> int:

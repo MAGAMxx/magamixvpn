@@ -201,7 +201,10 @@ def create_or_extend_both(added_days: int, user_id: int, existing_uuid: str = No
                 "name": "",
                 "package_days": added_days,
                 "usage_limit_GB": 150,
-                "mode": "no_reset"
+                "mode": "reset",
+                "reset_strategy": "weekly",
+                "reset_period_days": 7,
+                "comment": f"tg:{user_id}"
             }
             if server_name == "DE":
                 payload["uuid"] = uuid  # для DE можно явно указывать uuid
@@ -263,7 +266,10 @@ def create_or_extend_both(added_days: int, user_id: int, existing_uuid: str = No
                     "package_days": new_package_days,
                     "name": "",  # оставляем пустым
                     "usage_limit_GB": 150,
-                    "mode": "no_reset"
+                    "mode": "reset",
+                    "reset_strategy": "weekly",
+                    "reset_period_days": 7,
+                    "comment": f"tg:{user_id}"
                 }
                 
                 r_patch = requests.patch(url, json=payload, headers=headers, timeout=12)

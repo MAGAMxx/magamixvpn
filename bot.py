@@ -962,20 +962,22 @@ async def device_instruction(callback: CallbackQuery):
             return
         selected_uuid = subs[0][0]  # берём первый активный UUID
 
-    # Прямые ссылки на конфиг (без deeplink.website)
+    # Базовые ссылки на конфиг
     config_nl = f"{HIDDIFY_CLIENT_PATH_NL}/{selected_uuid}/"
     config_de = f"{HIDDIFY_CLIENT_PATH_DE}/{selected_uuid}/"
 
-    # Ссылки для импорта в Hiddify Next
-    import_nl = f"hiddify://import/{config_nl}"
-    import_de = f"hiddify://import/{config_de}"
-
-    # Определяем, что показывать для скачивания
+    # Deeplink для Happ-стиля (только для Windows используем deeplink.website)
+    deeplink_base = "https://deeplink.website/link?url_ha="
+    
+    # Только для Windows — используем deeplink.website + hiddify://import/
     if platform == "Windows":
+        import_nl = f"{deeplink_base}hiddify://import/{config_nl}"
+        import_de = f"{deeplink_base}hiddify://import/{config_de}"
         download_url = "https://github.com/hiddify/hiddify-next/releases/latest/download/Hiddify-Windows-Setup-x64.exe"
         app_name = "Hiddify Next"
+        download_text = "🔗 Скачать Hiddify для Windows"
         text = (
-            "✅ Скачайте и установите Hiddify для Windows\n\n"
+            "✅ Скачайте и установите **Hiddify Next** для Windows\n\n"
             "После установки:\n"
             "1. Откройте приложение\n"
             "2. Добавьте нужный сервер\n\n"
@@ -984,11 +986,13 @@ async def device_instruction(callback: CallbackQuery):
             "🇳🇱 Нидерланды — стабильность и обход\n\n"
             "Переключайтесь между ними в один клик!"
         )
-        download_text = "🔗 Скачать Hiddify для Windows"
     else:
-        # Для остальных платформ — Happ (можно потом заменить)
+        # Для остальных платформ — старый Happ
+        import_nl = f"{DEEPLINK_BASE}{config_nl}"
+        import_de = f"{DEEPLINK_BASE}{config_de}"
         download_url = HAPP_LINKS.get(platform, HAPP_LINKS["Android"])
         app_name = "Happ"
+        download_text = f"🔗 Скачать {app_name}"
         text = (
             f"✅ Скачайте приложение **{app_name}**\n\n"
             "Затем добавьте подписку на нужный сервер (можно оба):\n\n"
@@ -996,7 +1000,6 @@ async def device_instruction(callback: CallbackQuery):
             "🇳🇱 Нидерланды — стабильность и обход\n\n"
             "В приложении переключайтесь между ними в один клик!"
         )
-        download_text = f"🔗 Скачать {app_name}"
 
     kb = [
         [InlineKeyboardButton(text=download_text, url=download_url)],

@@ -83,6 +83,7 @@ dp.include_router(admin_router)
 
 class States(StatesGroup):
     waiting_free_check = State()
+    waiting_review = State()
 
 
 # База данных
@@ -482,6 +483,7 @@ async def send_main_menu(event, user_name, user_id):
         [InlineKeyboardButton(text="💳 Оплатить VPN", callback_data="pay")],
         [InlineKeyboardButton(text="📲 Установить VPN", callback_data="install")],
         [InlineKeyboardButton(text="👥 Пригласить друзей", callback_data="referral")],
+        [InlineKeyboardButton(text="📝 Оставить отзыв", callback_data="leave_review")],
         [InlineKeyboardButton(text="🆘 Поддержка", url="t.me/magamix_support")]
     ]
     if not user_got_free(user_id):
@@ -1183,6 +1185,50 @@ async def confirm_broadcast(callback: CallbackQuery, state: FSMContext):
     await bot.send_message(ADMIN_ID, f"Рассылка завершена: {success}/{total}")
     await state.clear()
     await callback.answer("Рассылка завершена!")
+
+@dp.callback_query(F.data == "leave_review")
+async def start_review(callback: CallbackQuery, state: FSMContext):
+    await callback.message.edit_text(
+        "📝 Напиши свой отзыв о Magam VPN!\n\n"
+        "Можешь рассказать:\n"
+        "• Как работает скорость\n"
+        "• Стабильность в РФ\n"
+        "• Удобство приложения\n"
+        "• Что нравится / не нравится\n\n"
+        "Отправь сообщение — оно сразу уйдёт админу. Спасибо! ❤️"
+    )
+    await state.set_state(States.waiting_review)
+    await callback.answer()
+
+@dp.message(States.waiting_review)
+async def process_review(message: Message, state: FSMContext):
+    user_id = message.from_user.id
+    username = message.from_user.username or "нет"
+    review_text = message.text.strip()
+
+    if not review_text:
+        await message.answer("Отзыв не может быть пустым. Напиши что-нибудь :)")
+        return
+
+    # Отправляем отзыв админу
+    await bot.send_message(
+        ADMIN_ID,
+        f"Новый отзыв от пользователя {user_id} (@{username}):\n\n"
+        f"{review_text}\n\n"
+        f"Время: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+    )
+
+    # Подтверждение пользователю
+    await message.answer(
+        "Спасибо за отзыв! ❤️\n"
+        "Админ увидит его прямо сейчас. Если хочешь — можешь написать ещё."
+    )
+
+    # Возвращаем в главное меню
+    await send_main_menu(message, message.from_user.first_name, user_id)
+
+    # Очищаем состояние
+    await state.clear()
 
 @admin_router.callback_query(F.data == "admin_stats")
 async def admin_stats(callback: CallbackQuery):

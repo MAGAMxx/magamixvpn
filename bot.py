@@ -92,7 +92,7 @@ DB_FILE = "users.db"
 def init_db():
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
-    
+   
     # Создаём таблицы, если нет
     c.execute('''
         CREATE TABLE IF NOT EXISTS users (
@@ -122,17 +122,26 @@ def init_db():
             status TEXT DEFAULT 'active'
         )
     ''')
-    
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS reviews (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            username TEXT,
+            review_text TEXT,
+            created_at TEXT
+        )
+    ''')
+   
     # Миграция: добавляем metadata, если столбца нет
     try:
         c.execute("ALTER TABLE payments ADD COLUMN metadata TEXT")
         logging.info("Добавлен столбец metadata в таблицу payments")
     except sqlite3.OperationalError as e:
         if "duplicate column name" in str(e):
-            pass  # столбец уже есть
+            pass # столбец уже есть
         else:
             raise e
-    
+   
     conn.commit()
     conn.close()
 
@@ -1188,6 +1197,11 @@ async def confirm_broadcast(callback: CallbackQuery, state: FSMContext):
 
 @dp.callback_query(F.data == "leave_review")
 async def start_review(callback: CallbackQuery, state: FSMContext):
+    # Inline-кнопка "Отмена"
+    cancel_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="❌ Отмена", callback_data="cancel_review")]
+    ])
+
     await callback.message.edit_text(
         "📝 Напиши свой отзыв о Magam VPN!\n\n"
         "Можешь рассказать:\n"
@@ -1195,10 +1209,19 @@ async def start_review(callback: CallbackQuery, state: FSMContext):
         "• Стабильность в РФ\n"
         "• Удобство приложения\n"
         "• Что нравится / не нравится\n\n"
-        "Отправь сообщение — оно сразу уйдёт админу. Спасибо! ❤️"
+        "Отправь сообщение — оно сразу уйдёт админу. Спасибо! ❤️\n\n"
+        "Или нажми «Отмена», чтобы вернуться в меню.",
+        reply_markup=cancel_kb  # ← добавляем клавиатуру
     )
     await state.set_state(States.waiting_review)
     await callback.answer()
+
+@dp.callback_query(F.data == "cancel_review", States.waiting_review)
+async def cancel_review(callback: CallbackQuery, state: FSMContext):
+    await callback.message.edit_text("Отзыв отменён. Возвращаемся в главное меню.")
+    await state.clear()
+    await send_main_menu(callback, callback.from_user.first_name, callback.from_user.id)
+    await callback.answer("Отменено")
 
 @dp.message(States.waiting_review)
 async def process_review(message: Message, state: FSMContext):
@@ -1206,17 +1229,45 @@ async def process_review(message: Message, state: FSMContext):
     username = message.from_user.username or "нет"
     review_text = message.text.strip()
 
+    # Обработка отмены (независимо от регистра и лишних пробелов)
+    if review_text.lower().strip() in ["отмена", "cancel", "назад"]:
+        await message.answer("Отзыв отменён. Возвращаемся в главное меню.")
+        await state.clear()
+        await send_main_menu(message, message.from_user.first_name, user_id)
+        return
+
+    # Пустой отзыв
     if not review_text:
         await message.answer("Отзыв не может быть пустым. Напиши что-нибудь :)")
         return
 
+    # Сохраняем отзыв в базу
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        c = conn.cursor()
+        c.execute(
+            "INSERT INTO reviews (user_id, username, review_text, created_at) VALUES (?, ?, ?, ?)",
+            (user_id, username, review_text, datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+        )
+        conn.commit()
+    except Exception as e:
+        logging.error(f"Ошибка сохранения отзыва в базу для user {user_id}: {e}")
+        await message.answer("Ошибка сохранения отзыва. Попробуй позже или напиши в поддержку.")
+        await state.clear()
+        return
+    finally:
+        conn.close()
+
     # Отправляем отзыв админу
-    await bot.send_message(
-        ADMIN_ID,
-        f"Новый отзыв от пользователя {user_id} (@{username}):\n\n"
-        f"{review_text}\n\n"
-        f"Время: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
-    )
+    try:
+        await bot.send_message(
+            ADMIN_ID,
+            f"Новый отзыв от пользователя {user_id} (@{username}):\n\n"
+            f"{review_text}\n\n"
+            f"Время: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+        )
+    except Exception as e:
+        logging.error(f"Не удалось отправить отзыв админу от user {user_id}: {e}")
 
     # Подтверждение пользователю
     await message.answer(

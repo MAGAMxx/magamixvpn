@@ -962,49 +962,22 @@ async def device_instruction(callback: CallbackQuery):
             return
         selected_uuid = subs[0][0]  # берём первый активный UUID
 
-    # Базовые ссылки на конфиг
-    config_nl = f"{HIDDIFY_CLIENT_PATH_NL}/{selected_uuid}/"
-    config_de = f"{HIDDIFY_CLIENT_PATH_DE}/{selected_uuid}/"
+    # Формируем обе ссылки как раньше
+    deeplink_nl = f"{DEEPLINK_BASE}{HIDDIFY_CLIENT_PATH_NL}/{selected_uuid}/"
+    deeplink_de = f"{DEEPLINK_BASE}{HIDDIFY_CLIENT_PATH_DE}/{selected_uuid}/"
 
-    # Deeplink для Happ-стиля (только для Windows используем deeplink.website)
-    deeplink_base = "https://deeplink.website/link?url_ha="
-    
-    # Только для Windows — используем deeplink.website + hiddify://import/
-    if platform == "Windows":
-        import_nl = f"{deeplink_base}hiddify://import/{config_nl}"
-        import_de = f"{deeplink_base}hiddify://import/{config_de}"
-        download_url = "https://github.com/hiddify/hiddify-next/releases/latest/download/Hiddify-Windows-Setup-x64.exe"
-        app_name = "Hiddify Next"
-        download_text = "🔗 Скачать Hiddify для Windows"
-        text = (
-            "✅ Скачайте и установите **Hiddify Next** для Windows\n\n"
-            "После установки:\n"
-            "1. Откройте приложение\n"
-            "2. Добавьте нужный сервер\n\n"
-            "Можно добавить оба сервера:\n"
-            "🇩🇪 Германия — максимальная скорость\n"
-            "🇳🇱 Нидерланды — стабильность и обход\n\n"
-            "Переключайтесь между ними в один клик!"
-        )
-    else:
-        # Для остальных платформ — старый Happ
-        import_nl = f"{DEEPLINK_BASE}{config_nl}"
-        import_de = f"{DEEPLINK_BASE}{config_de}"
-        download_url = HAPP_LINKS.get(platform, HAPP_LINKS["Android"])
-        app_name = "Happ"
-        download_text = f"🔗 Скачать {app_name}"
-        text = (
-            f"✅ Скачайте приложение **{app_name}**\n\n"
-            "Затем добавьте подписку на нужный сервер (можно оба):\n\n"
-            "🇩🇪 Германия — максимальная скорость\n"
-            "🇳🇱 Нидерланды — стабильность и обход\n\n"
-            "В приложении переключайтесь между ними в один клик!"
-        )
+    text = (
+        "✅ Скачайте приложение Happ\n\n"
+        "Затем добавьте подписку на нужный сервер (можно оба):\n\n"
+        "🇩🇪 Германия — максимальная скорость\n"
+        "🇳🇱 Нидерланды — стабильность и обход\n\n"
+        "В Happ переключайся между ними в один клик!"
+    )
 
     kb = [
-        [InlineKeyboardButton(text=download_text, url=download_url)],
-        [InlineKeyboardButton(text="🇩🇪 Добавить Германию", url=import_de)],
-        [InlineKeyboardButton(text="🇳🇱 Добавить Нидерланды", url=import_nl)],
+        [InlineKeyboardButton(text="🔗 Скачать Happ", url=HAPP_LINKS.get(platform, HAPP_LINKS["Android"]))],
+        [InlineKeyboardButton(text="🇩🇪 Добавить Германию", url=deeplink_de)],
+        [InlineKeyboardButton(text="🇳🇱 Добавить Нидерланды", url=deeplink_nl)],
         [InlineKeyboardButton(text="🔙 Главное меню", callback_data="back_main")]
     ]
 

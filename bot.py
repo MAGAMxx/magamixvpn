@@ -418,28 +418,30 @@ def get_remaining_days(uuid: str) -> int:
 def _get_remaining_from_server(uuid: str, base_url: str, api_key: str) -> int:
     url = f"{base_url}/api/v2/admin/user/{uuid}/"
     headers = {"Hiddify-API-Key": api_key, "Content-Type": "application/json"}
-    
+   
     try:
         r = requests.get(url, headers=headers, timeout=10)
         logging.info(f"[GET {uuid}] Status: {r.status_code} | URL: {url}")
-        
+       
         if r.status_code != 200:
             logging.warning(f"[GET {uuid}] Не 200 → {r.text}")
             return 0
-            
+           
         data = r.json()
-        
-        package_days = data.get("package_days")
+       
+        package_days = data.get("package_days", 0)
         start_date_str = data.get("start_date")
-        
-        
+       
         if not isinstance(package_days, (int, float)) or package_days <= 0:
+            logging.warning(f"[GET {uuid}] package_days некорректный: {package_days}")
             return 0
-            
+       
+        # Если start_date нет или null — считаем, что подписка свежая → возвращаем полные дни
         if not start_date_str or start_date_str in ("null", "", None):
-            return 0
-        
-        # Пробуем разные форматы даты — Hiddify бывает непоследовательным
+            logging.info(f"[GET {uuid}] Нет start_date → возвращаем полные {package_days} дней (новая подписка)")
+            return int(package_days)
+       
+        # Пробуем распарсить дату
         start_date = None
         for fmt in ["%Y-%m-%d", "%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M:%S.%f"]:
             try:
@@ -447,32 +449,25 @@ def _get_remaining_from_server(uuid: str, base_url: str, api_key: str) -> int:
                 break
             except ValueError:
                 continue
-        
+       
         if not start_date:
-            return 0
-        
-        # Самая надёжная и популярная формула для Hiddify
-        # package_days = 7 → доступ до конца 7-го дня включительно
+            logging.warning(f"[GET {uuid}] Неверный формат start_date: '{start_date_str}' → fallback на {package_days} дней")
+            return int(package_days)
+       
+        # Нормальный расчёт оставшихся дней
         expiry_date = start_date + timedelta(days=package_days)
         today = datetime.now()
-        
-        if today >= expiry_date:
-            remaining = 0
-        else:
-            remaining = (expiry_date - today).days
-        
-        remaining = max(0, remaining)
-        
+       
+        remaining = max(0, (expiry_date - today).days)
+       
         logging.info(
             f"[GET {uuid}] server={base_url.split('//')[1].split('/')[0]} | "
-            f"start={start_date.date()} | "
-            f"expiry≈{expiry_date.date()} | "
-            f"now={today} | "
-            f"remaining={remaining} дней"
+            f"start={start_date.date()} | expiry≈{expiry_date.date()} | "
+            f"now={today.date()} | remaining={remaining} дней"
         )
-        
+       
         return remaining
-        
+       
     except Exception as e:
         logging.error(f"[GET {uuid}] Критическая ошибка на {base_url}: {str(e)}", exc_info=True)
         return 0

@@ -201,9 +201,7 @@ def create_or_extend_both(added_days: int, user_id: int, existing_uuid: str = No
                 "name": "",
                 "package_days": added_days,
                 "usage_limit_GB": 150,
-                "mode": "reset",
-                "reset_strategy": "weekly",
-                "reset_period_days": 7,
+                "mode": "no_reset",
                 "comment": f"tg:{user_id}"
             }
             if server_name == "DE":
@@ -266,9 +264,7 @@ def create_or_extend_both(added_days: int, user_id: int, existing_uuid: str = No
                     "package_days": new_package_days,
                     "name": "",  # оставляем пустым
                     "usage_limit_GB": 150,
-                    "mode": "reset",
-                    "reset_strategy": "weekly",
-                    "reset_period_days": 7,
+                    "mode": "no_reset",
                     "comment": f"tg:{user_id}"
                 }
                 

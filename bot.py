@@ -59,7 +59,7 @@ STARS_PRICES = {    # примерные цены в Stars (можно подк�
 HAPP_LINKS = {
     "Android": "https://play.google.com/store/apps/details?id=com.happproxy&hl=ru&pli=1",
     "iOS": "https://apps.apple.com/ru/app/happ-proxy-utility-plus/id6746188973",
-    "Windows": "https://github.com/Happ-proxy/happ-desktop/releases/latest/download/setup-Happ.x64.exe",
+    "Windows": "https://github.com/hiddify/hiddify-next/releases/latest/download/Hiddify-Windows-Setup-x64.exe",
     "MacOS": "https://apps.apple.com/ru/app/happ-proxy-utility-plus/id6746188973"
 }
 
@@ -962,26 +962,54 @@ async def device_instruction(callback: CallbackQuery):
             return
         selected_uuid = subs[0][0]  # берём первый активный UUID
 
-    # Формируем обе ссылки
-    deeplink_nl = f"{DEEPLINK_BASE}{HIDDIFY_CLIENT_PATH_NL}/{selected_uuid}/"
-    deeplink_de = f"{DEEPLINK_BASE}{HIDDIFY_CLIENT_PATH_DE}/{selected_uuid}/"
+    # Прямые ссылки на конфиг (без deeplink.website)
+    config_nl = f"{HIDDIFY_CLIENT_PATH_NL}/{selected_uuid}/"
+    config_de = f"{HIDDIFY_CLIENT_PATH_DE}/{selected_uuid}/"
 
-    text = (
-        "✅ Скачайте приложение Happ\n\n"
-        "Затем добавьте подписку на нужный сервер (можно оба):\n\n"
-        "🇩🇪 Германия — максимальная скорость\n"
-        "🇳🇱 Нидерланды — стабильность и обход\n\n"
-        "В Happ переключайся между ними в один клик!"
-    )
+    # Ссылки для импорта в Hiddify Next
+    import_nl = f"hiddify://import/{config_nl}"
+    import_de = f"hiddify://import/{config_de}"
+
+    # Определяем, что показывать для скачивания
+    if platform == "Windows":
+        download_url = "https://github.com/hiddify/hiddify-next/releases/latest/download/Hiddify-Windows-Setup-x64.exe"
+        app_name = "Hiddify Next"
+        text = (
+            "✅ Скачайте и установите Hiddify для Windows\n\n"
+            "После установки:\n"
+            "1. Откройте приложение\n"
+            "2. Добавьте нужный сервер\n\n"
+            "Можно добавить оба сервера:\n"
+            "🇩🇪 Германия — максимальная скорость\n"
+            "🇳🇱 Нидерланды — стабильность и обход\n\n"
+            "Переключайтесь между ними в один клик!"
+        )
+        download_text = "🔗 Скачать Hiddify для Windows"
+    else:
+        # Для остальных платформ — Happ (можно потом заменить)
+        download_url = HAPP_LINKS.get(platform, HAPP_LINKS["Android"])
+        app_name = "Happ"
+        text = (
+            f"✅ Скачайте приложение **{app_name}**\n\n"
+            "Затем добавьте подписку на нужный сервер (можно оба):\n\n"
+            "🇩🇪 Германия — максимальная скорость\n"
+            "🇳🇱 Нидерланды — стабильность и обход\n\n"
+            "В приложении переключайтесь между ними в один клик!"
+        )
+        download_text = f"🔗 Скачать {app_name}"
 
     kb = [
-        [InlineKeyboardButton(text="🔗 Скачать Happ", url=HAPP_LINKS.get(platform, HAPP_LINKS["Android"]))],
-        [InlineKeyboardButton(text="🇩🇪 Добавить Германию", url=deeplink_de)],
-        [InlineKeyboardButton(text="🇳🇱 Добавить Нидерланды", url=deeplink_nl)],
+        [InlineKeyboardButton(text=download_text, url=download_url)],
+        [InlineKeyboardButton(text="🇩🇪 Добавить Германию", url=import_de)],
+        [InlineKeyboardButton(text="🇳🇱 Добавить Нидерланды", url=import_nl)],
         [InlineKeyboardButton(text="🔙 Главное меню", callback_data="back_main")]
     ]
 
-    await callback.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+    await callback.message.edit_text(
+        text,
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=kb),
+        parse_mode="Markdown"
+    )
     await callback.answer()
     
         

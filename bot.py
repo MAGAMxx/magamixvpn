@@ -493,6 +493,7 @@ async def send_main_menu(event, user_name, user_id):
         [InlineKeyboardButton(text="📲 Установить VPN", callback_data="install")],
         [InlineKeyboardButton(text="👥 Пригласить друзей", callback_data="referral")],
         [InlineKeyboardButton(text="📝 Оставить отзыв", callback_data="leave_review")],
+        [InlineKeyboardButton(text="📝 Отзывы", url="https://t.me/otziv_magamvpn")],
         [InlineKeyboardButton(text="🆘 Поддержка", url="t.me/magamix_support")]
     ]
     if not user_got_free(user_id):

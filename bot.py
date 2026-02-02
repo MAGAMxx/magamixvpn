@@ -26,10 +26,10 @@ Configuration.secret_key = YOOKASSA_SECRET_KEY
 
 
 
-# Нидерланды (основная панель)
-HIDDIFY_ADMIN_PATH_NL = "https://vpn.tgflovv.ru/a2NRdl78IHwZBYBReUx"
-HIDDIFY_CLIENT_PATH_NL = "https://vpn.tgflovv.ru/6bqCF1dLYRFoerALhhXu8cn98"
-API_KEY_NL = "245320ca-f07d-401b-9f43-000735d93085"
+# Нидерланды  росс (основная панель)
+HIDDIFY_ADMIN_PATH_NL = "https://ru.tgflovv.ru/4qEZbMuS4pVIx7ghpPyGR1J"
+HIDDIFY_CLIENT_PATH_NL = "https://ru.tgflovv.ru/9XsfsGHjsa9Ct0WyXmh"
+API_KEY_NL = "089b8cbb-dd13-44d1-b519-75f18feadc84"
 # Германия (вторая панель)
 HIDDIFY_ADMIN_PATH_DE = "https://de.vpn.tgflovv.ru/PD6KuWi6xGGguNRRz3v"  # замени на реальный
 HIDDIFY_CLIENT_PATH_DE = "https://de.vpn.tgflovv.ru/nm4cYxIzEFEwvbnvo2bpaChEUgYIv8"
@@ -210,7 +210,7 @@ def create_or_extend_both(added_days: int, user_id: int, existing_uuid: str = No
             payload = {
                 "name": "",
                 "package_days": added_days,
-                "usage_limit_GB": 150,
+                "usage_limit_GB": 1000,
                 "mode": "weekly",
                 "comment": f"tg:{user_id}"
             }
@@ -273,7 +273,7 @@ def create_or_extend_both(added_days: int, user_id: int, existing_uuid: str = No
                 payload = {
                     "package_days": new_package_days,
                     "name": "",  # оставляем пустым
-                    "usage_limit_GB": 150,
+                    "usage_limit_GB": 1000,
                     "mode": "weekly",
                     "comment": f"tg:{user_id}"
                 }
@@ -812,7 +812,7 @@ async def successful_stars_payment(message: types.Message):
             f"🎉 Оплата через ⭐ Stars прошла успешно!\n\n"
             f"Добавлено **+{days} дней** к подписке!\n"
             f"Сумма: {payment.total_amount} ⭐\n\n"
-            f"Перейдите в «Установить VPN» → добавьте Германию и/или Нидерланды"
+            f"Перейдите в «Установить VPN» → добавьте Германию и/или Россия"
         )
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="📲 Главное меню", callback_data="back_main")]
@@ -853,7 +853,7 @@ async def check_free_sub(callback: CallbackQuery, state: FSMContext):
                 if result:
                     await callback.message.edit_text(
                         "🎉 Подписка на 3 дня выдана на обоих серверах!\n\n"
-                        "Перейдите в «Установить VPN» → добавьте Германию и/или Нидерланды"
+                        "Перейдите в «Установить VPN» → добавьте Германию и/или Россия"
                     )
                     mark_got_free(user_id)
                     await bot.send_message(ADMIN_ID, f"Бесплатно 3 дня выданы: {callback.from_user.full_name} ({user_id})")
@@ -976,15 +976,15 @@ async def device_instruction(callback: CallbackQuery):
     text = (
         "✅ Скачайте приложение Happ\n\n"
         "Затем добавьте подписку на нужный сервер (можно оба):\n\n"
-        "🇩🇪 Германия — максимальная скорость\n"
-        "🇳🇱 Нидерланды — стабильность и обход\n\n"
+        "🇩🇪 Германия — Максимальная скорость\n"
+        "🇷🇺 Россия — Обход белых списков и глушилок\n\n"
         "В Happ переключайся между ними в один клик!"
     )
 
     kb = [
         [InlineKeyboardButton(text="🔗 Скачать Happ", url=HAPP_LINKS.get(platform, HAPP_LINKS["Android"]))],
         [InlineKeyboardButton(text="🇩🇪 Добавить Германию", url=deeplink_de)],
-        [InlineKeyboardButton(text="🇳🇱 Добавить Нидерланды", url=deeplink_nl)],
+        [InlineKeyboardButton(text="🇷🇺 Добавить Россию", url=deeplink_nl)],
         [InlineKeyboardButton(text="🔙 Главное меню", callback_data="back_main")]
     ]
 

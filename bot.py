@@ -29,7 +29,7 @@ Configuration.secret_key = YOOKASSA_SECRET_KEY
 # Нидерланды  росс (основная панель)
 HIDDIFY_ADMIN_PATH_NL = "https://ru.tgflovv.ru/4qEZbMuS4pVIx7ghpPyGR1J"
 HIDDIFY_CLIENT_PATH_NL = "https://ru.tgflovv.ru/9XsfsGHjsa9Ct0WyXmh"
-API_KEY_NL = "089b8cbb-dd13-44d1-b519-75f18feadc84"
+API_KEY_NL = "a8462a0c-9400-4a8a-baaf-b151b1c93a9d"
 # Германия (вторая панель)
 HIDDIFY_ADMIN_PATH_DE = "https://de.vpn.tgflovv.ru/PD6KuWi6xGGguNRRz3v"  # замени на реальный
 HIDDIFY_CLIENT_PATH_DE = "https://de.vpn.tgflovv.ru/nm4cYxIzEFEwvbnvo2bpaChEUgYIv8"

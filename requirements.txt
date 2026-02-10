@@ -1,0 +1,11 @@
+aiogram==3.1.1
+aiohttp==3.8.5
+aiofiles==23.1.0
+requests==2.31.0
+yookassa==3.0.0
+pydantic==2.3.0
+typing-extensions==4.7.1
+urllib3==2.0.4
+deprecated==1.2.14
+distro==1.8.0
+netaddr==0.8.0

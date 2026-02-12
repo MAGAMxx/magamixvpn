@@ -2,11 +2,12 @@ import asyncio
 from aiogram import F, Router
 from aiogram.types import CallbackQuery, Message, LabeledPrice, PreCheckoutQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.context import FSMContext
+from datetime import datetime
 from yookassa import Configuration, Payment
 
 from config.settings import ADMIN_IDS
 from config.payments import TARIFS, STARS_PRICES, PAYMENT_METHODS, YOOKASSA_SHOP_ID, YOOKASSA_SECRET_KEY
-from database.models import add_payment, get_latest_subscription
+from database.models import add_payment, get_latest_subscription, get_pending_yookassa_payments, mark_payment_as_completed
 from services.hiddify_service import HiddifyService
 
 # Настройка ЮKassa
@@ -246,3 +247,56 @@ async def successful_stars_payment(message: Message):
                 pass
     else:
         await message.answer("❌ Ошибка при создании подписки. Обратитесь в поддержку.")
+
+async def notify_admins(bot, text: str):
+     for admin_id in ADMIN_IDS:
+         try:
+             await bot.send_message(admin_id, text)
+         except Exception as e:
+             print(f"Ошибка отправки админу {admin_id}: {e}")
+
+
+async def yookassa_payment_watcher(bot):
+     """     Периодически проверяет неоплаченные платежи ЮKassa     """
+     print("🔁 ЮKassa watcher запущен")
+      
+     while True:
+         try:
+             # ⚠️ тебе нужна функция получения НЕОБРАБОТАННЫХ платежей
+             # пример: get_pending_payments()
+             payments = get_pending_yookassa_payments()
+              
+             for payment_data in payments:
+                 payment_id = payment_data["payment_id"] 
+                 payment = Payment.find_one(payment_id)
+                  
+                 if payment.status != "succeeded":
+                     continue
+                 
+                 metadata = payment.metadata
+                 user_id = int(metadata["user_id"])
+                 days = int(metadata["days"])
+                 tarif = metadata["tarif"]
+ 
+                 # продлеваем подписку
+                 result = extend_or_create_subscription(user_id, days)
+                  
+                 if result:
+                     mark_payment_as_completed(payment_id)
+                      
+                     text = (
+                         f"💳 ЮKassa ОПЛАТА УСПЕШНА\n\n"
+                         f"👤 Пользователь: {user_id}\n"
+                         f"📦 Тариф: {tarif}\n"
+                         f"⏳ Дней: {days} \n"
+                         f"🆔 Payment ID: {payment_id}\n"
+                         f"🕒 {datetime.now()}" 
+                     )
+                      
+                     await notify_admins(bot, text)
+
+         except Exception as e:
+             print(f"❌ Ошибка watcher ЮKassa: {e}")
+
+         await asyncio.sleep(60)  # ⏱ проверка раз в минуту
+

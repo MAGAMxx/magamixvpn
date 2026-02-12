@@ -14,23 +14,32 @@ class HiddifyService:
     
     def create_or_extend_both(self, added_days: int, user_id: int, existing_uuid: str = None) -> Optional[Dict]:
         """
-        Создаёт новую подписку или продлевает существующую на сервере.
+        Создаёт новую подписку или продлевает существующую на ОБОИХ серверах.
         Всегда добавляет дни к текущему package_days (не заменяет).
         """
         uuid = existing_uuid or str(uuid4())
         
-        # Обрабатываем единственный сервер
-        if not self._process_server("MAIN", uuid, added_days, user_id, not existing_uuid):
-            print(f"Не удалось обработать сервер для user={user_id}")
+        # Обрабатываем оба сервера
+        ru_success = self._process_server("RU", uuid, added_days, user_id, not existing_uuid)
+        nl_success = self._process_server("NL", uuid, added_days, user_id, not existing_uuid)
+        
+        if not ru_success and not nl_success:
+            print(f"Не удалось обработать ни один сервер для user={user_id}")
             return None
+        
+        if not ru_success:
+            print(f"Предупреждение: RU сервер недоступен для user={user_id}")
+        if not nl_success:
+            print(f"Предупреждение: NL сервер недоступен для user={user_id}")
         
         # Если это новая подписка — сохраняем в БД
         if not existing_uuid:
             add_subscription(user_id, uuid)
         
-        # Возвращаем ссылку
+        # Возвращаем ссылки на оба сервера
         return {
-            "main": f"{DEEPLINK_BASE}{self.servers['MAIN']['client_path']}/{uuid}/",
+            "ru": f"{DEEPLINK_BASE}{self.servers['RU']['client_path']}/{uuid}/",
+            "nl": f"{DEEPLINK_BASE}{self.servers['NL']['client_path']}/{uuid}/",
             "uuid": uuid
         }
     
@@ -45,23 +54,23 @@ class HiddifyService:
             payload = {
                 "name": "",
                 "package_days": added_days,
-                "usage_limit_GB": 0,
+                "usage_limit_GB": 10000,
                 "mode": "weekly",
                 "comment": f"tg:{user_id}"
             }
-            if server_name == "MAIN":
-                payload["uuid"] = uuid  # для основного сервера можно явно указывать uuid
+            if server_name == "RU":
+                payload["uuid"] = uuid  # для RU сервера можно явно указывать uuid
             
             try:
                 r = requests.post(url, json=payload, headers=headers, timeout=15)
                 r.raise_for_status()
                 
-                if server_name == "MAIN":
-                    # MAIN возвращает новый uuid
+                if server_name == "RU":
+                    # RU возвращает новый uuid
                     new_uuid = r.json().get("uuid")
                     if new_uuid:
                         uuid = new_uuid
-                        print(f"Создан новый пользователь на MAIN, uuid={uuid}")
+                        print(f"Создан новый пользователь на RU, uuid={uuid}")
                 
                 print(f"Создание на {server_name}: {added_days} дней, uuid={uuid}")
                 return True
@@ -107,7 +116,7 @@ class HiddifyService:
                 payload = {
                     "package_days": new_package_days,
                     "name": "",
-                    "usage_limit_GB": 0,
+                    "usage_limit_GB": 10000,
                     "mode": "weekly",
                     "comment": f"tg:{user_id}"
                 }
@@ -130,10 +139,14 @@ class HiddifyService:
                 return False
     
     def get_remaining_days(self, uuid: str) -> int:
-        """Получает оставшиеся дни подписки"""
-        remaining_main = self._get_remaining_from_server(uuid, "MAIN")
-        print(f"[Remaining MAIN] uuid={uuid} → {remaining_main} дней")
-        return remaining_main
+        """Получает оставшиеся дни подписки (берет максимум с обоих серверов)"""
+        remaining_ru = self._get_remaining_from_server(uuid, "RU")
+        remaining_nl = self._get_remaining_from_server(uuid, "NL")
+        
+        print(f"[Remaining] uuid={uuid} → RU: {remaining_ru} дней, NL: {remaining_nl} дней")
+        
+        # Возвращаем максимум из двух серверов
+        return max(remaining_ru, remaining_nl)
     
     def _get_remaining_from_server(self, uuid: str, server_name: str) -> int:
         """Получает оставшиеся дни с одного сервера"""
@@ -229,7 +242,7 @@ class HiddifyService:
             return False
     
     def cleanup_expired_subscriptions(self, user_id: int):
-        """Очищает истёкшие подписки пользователя"""
+        """Очищает истёкшие подписки пользователя с обоих серверов"""
         from database.models import get_user_subscriptions
         
         subs = get_user_subscriptions(user_id)
@@ -245,6 +258,8 @@ class HiddifyService:
             
             remaining = self.get_remaining_days(uuid)
             if remaining <= 0:
-                self.delete_user(uuid, "MAIN")
+                # Удаляем с обоих серверов
+                self.delete_user(uuid, "RU")
+                self.delete_user(uuid, "NL")
                 update_subscription_status(uuid, "expired")
-                print(f"Подписка {uuid} для user {user_id} истекла (0 дней) и удалена")
+                print(f"Подписка {uuid} для user {user_id} истекла (0 дней) и удалена с обоих серверов")

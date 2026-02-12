@@ -1,8 +1,8 @@
-﻿BOT_TOKEN = "8521426166:AAHYYLg0Ot2tHI-qp6hA13i9wCFubn9WQ-A"
+﻿BOT_TOKEN = "8255308077:AAEenB9nueeR37FQy5zhg0W3gryElnJjcYk"
 ADMIN_IDS = [8479289622, 1811665749]
 CHANNEL_USERNAME = "@MAGAMIX_VPN"
 CHANNEL_LINK = "https://t.me/MAGAMIX_VPN"
-SUPPORT_LINK = "t.me/magamix_support"
+SUPPORT_LINK = "t.me/magam_support"
 REVIEWS_LINK = "https://t.me/otziv_magamvpn"
 DEEPLINK_BASE = "https://deeplink.website/link?url_ha="
 FREE_TRIAL_DAYS = 3

@@ -116,7 +116,7 @@ async def admin_promo(callback: CallbackQuery):
         for code, discount in promo_codes.items():
             buttons.append([
                 InlineKeyboardButton(text=f"{code} {discount}%", callback_data=f"promo_manage_{code}"),
-                InlineKeyboardButton(text="🗑️", callback_data=f"promo_delete_{code}")
+                InlineKeyboardButton(text="🗑️", callback_data=f"promo_delete_code{code}")
             ])
         
         buttons.append([InlineKeyboardButton(text="➕ Создать промокод", callback_data="admin_create_promo")])
@@ -186,7 +186,7 @@ async def promo_delete_confirm(callback: CallbackQuery):
     text = f"🗑️ **Удаление промокода**\n\nВы уверены, что хотите удалить промокод **{promo_code}**?"
     
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✅ Да, удалить", callback_data=f"promo_delete_confirm_{promo_code}")],
+        [InlineKeyboardButton(text="✅ Да, удалить", callback_data=f"promo_delete_confirm")],
         [InlineKeyboardButton(text="❌ Отмена", callback_data="admin_promo")]
     ])
     
@@ -196,7 +196,7 @@ async def promo_delete_confirm(callback: CallbackQuery):
 @promo_router.callback_query(F.data.startswith("promo_delete_confirm_"))
 async def promo_delete_execute(callback: CallbackQuery):
     """Выполнение удаления промокода"""
-    promo_code = callback.data.replace("promo_delete_confirm_", "")
+    promo_code = callback.data.replace("delete_promo_code", "")
     
     delete_promo_code(promo_code)
     await callback.answer("✅ Промокод удален!")

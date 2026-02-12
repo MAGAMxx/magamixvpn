@@ -1,0 +1,17 @@
+# ================== HIDDIFY СЕРВЕРЫ ==================
+
+# Основной сервер
+HIDDIFY_ADMIN_PATH = "https://ru.tgflovv.ru/dnmA4H6WKp2"
+HIDDIFY_CLIENT_PATH = "https://ru.tgflovv.ru/UN4BySzmdiXBdptRdbhdGX"
+API_KEY = "cce9292c-559f-4037-9da5-2d3d300f6dbd"
+
+# Конфигурация серверов
+SERVERS_CONFIG = {
+    "MAIN": {
+        "name": "Добавить подписку⚡",
+        "admin_path": HIDDIFY_ADMIN_PATH,
+        "client_path": HIDDIFY_CLIENT_PATH,
+        "api_key": API_KEY,
+        "priority": 1  # Единственный сервер
+    }
+}

@@ -253,3 +253,34 @@ def search_user(query: str):
     result = c.fetchone()
     conn.close()
     return result
+
+def get_pending_yookassa_payments():
+     """Возвращает все платежи ЮKassa со статусом pending"""
+     conn = sqlite3.connect(DB_FILE)
+     c = conn.cursor()
+     c.execute("""
+         SELECT payment_id
+         FROM payments
+         WHERE status = 'pending'
+     """) 
+
+     rows = c.fetchall()
+     conn.close()
+
+     return [{"payment_id": row[0]} for row in rows]
+
+
+def mark_payment_as_completed(payment_id: str):
+     """Помечает платёж как обработанный"""
+     conn = sqlite3.connect(DB_FILE)
+     c = conn.cursor()
+
+     c.execute("""
+         UPDATE payments
+         SET status = 'completed'
+         WHERE payment_id = ?
+     """, (payment_id,))
+
+     conn.commit()
+     conn.close()
+

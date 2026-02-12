@@ -7,7 +7,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from config.settings import BOT_TOKEN
 from database.models import init_db
 from handlers.user_handlers import user_router
-from handlers.payment_handlers import payment_router
+from handlers.payment_handlers import payment_router, yookassa_payment_watcher
 from admin import admin_routers
 
 # Настройка кодировки для Windows
@@ -39,6 +39,9 @@ async def main():
         print_status("Подключение роутеров...")
         dp.include_router(user_router)
         dp.include_router(payment_router)
+
+        asyncio.create_task(yookassa_payment_watcher(bot))
+
         
         # Подключение всех админ роутеров
         for router in admin_routers:

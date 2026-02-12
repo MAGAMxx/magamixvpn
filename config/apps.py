@@ -5,7 +5,8 @@ HAPP_LINKS = {
     "Android": "https://play.google.com/store/apps/details?id=com.happproxy&hl=ru&pli=1",
     "iOS": "https://apps.apple.com/ru/app/happ-proxy-utility-plus/id6746188973", 
     "Windows": "https://github.com/Happ-proxy/happ-desktop/releases/latest/download/setup-Happ.x64.exe",
-    "MacOS": "https://apps.apple.com/ru/app/happ-proxy-utility-plus/id6746188973"
+    "MacOS": "https://apps.apple.com/ru/app/happ-proxy-utility-plus/id6746188973",
+    "Linux": "https://github.com/hiddify/hiddify-next/releases/latest/download/Hiddify.Linux.AppImage"
 }
 
 # Альтернативные приложения

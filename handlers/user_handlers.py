@@ -192,63 +192,116 @@ async def pay(callback: CallbackQuery):
     await callback.message.edit_text("💸 Выбери тариф:", reply_markup=tarifs_menu())
     await callback.answer()
 
+# =========== НОВАЯ ВЕРСИЯ (полностью готовая) ===========
+
+async def show_device_selection(callback: CallbackQuery):
+    """Показывает выбор устройства"""
+    text = "📱 **Выберите ваше устройство:**"
+    
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🤖 Android", callback_data="install_android")],
+        [InlineKeyboardButton(text="🍎 iOS", callback_data="install_ios")],
+        [InlineKeyboardButton(text="🖥 Windows", callback_data="install_windows")],
+        [InlineKeyboardButton(text="🍏 macOS", callback_data="install_macos")],
+        [InlineKeyboardButton(text="🐧 Linux", callback_data="install_linux")],
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="back_main")]
+    ])
+    
+    await callback.message.edit_text(text, reply_markup=kb, parse_mode="Markdown")
+
 @user_router.callback_query(F.data == "install")
 async def install(callback: CallbackQuery):
     """Меню установки приложений"""
+    await show_device_selection(callback)
+    await callback.answer()
+
+@user_router.callback_query(F.data.startswith("install_"))
+async def install_device(callback: CallbackQuery):
+    """Показывает инструкции для выбранного устройства"""
+    device = callback.data.replace("install_", "")
     user_id = callback.from_user.id
     
-    # Получаем последнюю подписку пользователя
+    # Информация об устройствах
+    device_info = {
+        "android": {"name": "Android", "icon": "🤖"},
+        "ios": {"name": "iOS", "icon": "🍎"},
+        "windows": {"name": "Windows", "icon": "🖥"},
+        "macos": {"name": "macOS", "icon": "🍏"},
+        "linux": {"name": "Linux", "icon": "🐧"}
+    }
+    
+    device_name = device_info.get(device, {}).get("name", device.capitalize())
+    device_icon = device_info.get(device, {}).get("icon", "📱")
+    
+    # Проверяем подписку пользователя
     selected_uuid = get_latest_subscription(user_id)
     
     if not selected_uuid:
-        # Если нет подписки, показываем только ссылки на приложения
+        # Если НЕТ подписки
         text = (
-            "📲 **Установка VPN**\n\n"
-            "Сначала оплатите подписку, чтобы получить доступ к серверам.\n\n"
-            "Выберите вашу операционную систему для скачивания приложения Happ:"
+            f"{device_icon} **Установка VPN для {device_name}**\n\n"
+            "❌ **У вас нет активной подписки!**\n\n"
+            "Сначала оплатите подписку, чтобы получить доступ к серверам."
         )
         
-        kb = []
-        for os_name, link in HAPP_LINKS.items():
-            kb.append([InlineKeyboardButton(text=f"📱 {os_name}", url=link)])
-        
-        kb.append([InlineKeyboardButton(text="🔙 Назад", callback_data="back_main")])
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="💳 Оплатить VPN", callback_data="pay")],
+            [InlineKeyboardButton(text="🎁 Бесплатно 3 дня", callback_data="free_3days")],
+            [InlineKeyboardButton(text="🔙 Главное меню", callback_data="back_main")]
+        ])
         
     else:
-        # Если есть подписка, показываем ссылки на серверы
+        # Если ЕСТЬ подписка
         from config.settings import DEEPLINK_BASE
         from config.servers import SERVERS_CONFIG
         
-        # Определяем платформу (можно улучшить определение)
-        platform = "Android"  # По умолчанию
+        # Формируем ссылки на оба сервера
+        deeplink_ru = f"{DEEPLINK_BASE}{SERVERS_CONFIG['RU']['client_path']}/{selected_uuid}/"
+        deeplink_nl = f"{DEEPLINK_BASE}{SERVERS_CONFIG['NL']['client_path']}/{selected_uuid}/"
         
-        # Формируем ссылку на сервер
-        deeplink_main = f"{DEEPLINK_BASE}{SERVERS_CONFIG['MAIN']['client_path']}/{selected_uuid}/"
+        # Получаем правильную ссылку на Happ для устройства
+        device_map = {
+            "android": "Android",
+            "ios": "iOS",
+            "windows": "Windows",
+            "macos": "macOS",
+            "linux": "Linux"
+        }
+        
+        happ_device = device_map.get(device, "Android")
+        happ_link = HAPP_LINKS.get(happ_device, HAPP_LINKS.get("Android"))
         
         text = (
-            "📲 **Установка VPN**\n\n"
-            "✅ У вас есть активная подписка!\n"
-            "Нажмите кнопки ниже для настройки:"
+            f"{device_icon} **Установка VPN для {device_name}**\n\n"
+            "✅ **У вас есть активная подписка!**\n\n"
+            "📋 **Быстрая инструкция:**\n"
+            "1. Скачайте и установите Happ\n"
+            "2. Добавьте подписки для обоих серверов\n"
+            "3. Разрешите открытие ссылок в Happ\n"
+            "4. Нажмите «Подключить» в приложении"
         )
         
-        kb = [
-            [InlineKeyboardButton(text="🔗 Скачать Happ", url=HAPP_LINKS.get(platform, HAPP_LINKS["Android"]))],
-            [InlineKeyboardButton(text="🇷🇺 Добавить конфигурацию", url=deeplink_main)],
-            [InlineKeyboardButton(text="�  Главное меню", callback_data="back_main")]
-        ]
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text=f"⬇️ Скачать Happ", url=happ_link)],
+            [InlineKeyboardButton(text="Добавить подписку🇷🇺", url=deeplink_ru)],
+            [InlineKeyboardButton(text="Добавить подписку🇳🇱", url=deeplink_nl)],
+            [InlineKeyboardButton(text="📱 Выбрать другое устройство", callback_data="install")],
+            [InlineKeyboardButton(text="🔙 Главное меню", callback_data="back_main")]
+        ])
     
     await callback.message.edit_text(
         text, 
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=kb),
+        reply_markup=kb,
         parse_mode="Markdown"
     )
     await callback.answer()
+
 
 @user_router.callback_query(F.data == "referral")
 async def referral(callback: CallbackQuery):
     """Реферальная система"""
     user_id = callback.from_user.id
-    ref_link = f"https://t.me/magamixvpn_bot?start=ref_{user_id}"
+    ref_link = f"https://t.me/magam_vpn_bot?start=ref_{user_id}"
     
     text = (
         "👥 **Пригласи друзей и получи бонусы!**\n\n"
@@ -289,7 +342,7 @@ async def free_3days(callback: CallbackQuery, state: FSMContext):
         [InlineKeyboardButton(text="🔙 Назад", callback_data="back_main")]
     ])
     
-    await callback.message.edit_text(text, reply_markup=kb, parse_mode="Markdown")
+    await callback.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
     await state.set_state(States.waiting_free_check)
     await callback.answer()
 

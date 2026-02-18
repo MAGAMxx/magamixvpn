@@ -5,11 +5,9 @@ from typing import Optional, List, Tuple
 DB_FILE = "database/data/users.db"
 
 def init_db():
-    """Инициализация базы данных"""
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
    
-    # Создаём таблицы, если нет
     c.execute('''
         CREATE TABLE IF NOT EXISTS users (
             user_id INTEGER PRIMARY KEY,
@@ -48,14 +46,23 @@ def init_db():
             created_at TEXT
         )
     ''')
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS user_promo_discounts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            promo_code TEXT,
+            discount INTEGER,
+            created_at TEXT,
+            is_used INTEGER DEFAULT 0
+        )
+    ''')
    
-    # Миграция: добавляем metadata, если столбца нет
     try:
         c.execute("ALTER TABLE payments ADD COLUMN metadata TEXT")
         print("Добавлен столбец metadata в таблицу payments")
     except sqlite3.OperationalError as e:
         if "duplicate column name" in str(e):
-            pass # столбец уже есть
+            pass
         else:
             raise e
    
@@ -63,7 +70,6 @@ def init_db():
     conn.close()
 
 def add_user_if_new(user_id: int, username: str) -> bool:
-    """Добавляет пользователя если новый. Возвращает True если новый"""
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
     c.execute("SELECT user_id FROM users WHERE user_id = ?", (user_id,))
@@ -73,12 +79,11 @@ def add_user_if_new(user_id: int, username: str) -> bool:
                   (user_id, username, reg_date))
         conn.commit()
         conn.close()
-        return True  # новый
+        return True
     conn.close()
     return False
 
 def user_got_free(user_id: int) -> bool:
-    """Проверяет получал ли пользователь бесплатные дни"""
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
     c.execute("SELECT got_free FROM users WHERE user_id = ?", (user_id,))
@@ -87,7 +92,6 @@ def user_got_free(user_id: int) -> bool:
     return result[0] == 1 if result else False
 
 def mark_got_free(user_id: int):
-    """Отмечает что пользователь получил бесплатные дни"""
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
     c.execute("UPDATE users SET got_free = 1 WHERE user_id = ?", (user_id,))
@@ -95,7 +99,6 @@ def mark_got_free(user_id: int):
     conn.close()
 
 def get_user_subscriptions(user_id: int) -> List[Tuple[str, str]]:
-    """Получает активные подписки пользователя"""
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
     c.execute("SELECT uuid, created_at FROM subscriptions WHERE user_id = ? AND status = 'active'", (user_id,))
@@ -104,7 +107,6 @@ def get_user_subscriptions(user_id: int) -> List[Tuple[str, str]]:
     return subs
 
 def add_subscription(user_id: int, uuid: str) -> bool:
-    """Добавляет новую подписку в БД"""
     try:
         conn = sqlite3.connect(DB_FILE)
         c = conn.cursor()
@@ -118,7 +120,6 @@ def add_subscription(user_id: int, uuid: str) -> bool:
         """, (user_id, uuid, created_at))
         conn.commit()
         
-        # Проверка вставки
         c.execute("SELECT status FROM subscriptions WHERE uuid = ?", (uuid,))
         status_after = c.fetchone()[0]
         print(f"СТАТУС СРАЗУ ПОСЛЕ ВСТАВКИ: {status_after}")
@@ -131,7 +132,6 @@ def add_subscription(user_id: int, uuid: str) -> bool:
         return False
 
 def add_payment(user_id: int, payment_id: str, tarif: str, days: int, metadata: str = None):
-    """Добавляет платеж в БД"""
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
     c.execute("""
@@ -149,7 +149,6 @@ def add_payment(user_id: int, payment_id: str, tarif: str, days: int, metadata: 
     conn.close()
 
 def update_subscription_status(uuid: str, status: str):
-    """Обновляет статус подписки"""
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
     c.execute("UPDATE subscriptions SET status = ? WHERE uuid = ?", (status, uuid))
@@ -157,7 +156,6 @@ def update_subscription_status(uuid: str, status: str):
     conn.close()
 
 def add_review(user_id: int, username: str, review_text: str):
-    """Добавляет отзыв в БД"""
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
     created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -167,13 +165,11 @@ def add_review(user_id: int, username: str, review_text: str):
     """, (user_id, username, review_text, created_at))
     conn.commit()
     
-    # Получаем номер отзыва (ID последней записи)
     review_id = c.lastrowid
     conn.close()
     return review_id
 
 def get_review_by_id(review_id: int):
-    """Получает отзыв по ID"""
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
     c.execute("SELECT * FROM reviews WHERE id = ?", (review_id,))
@@ -182,7 +178,6 @@ def get_review_by_id(review_id: int):
     return result
 
 def get_latest_subscription(user_id: int) -> Optional[str]:
-    """Получает последнюю активную подписку пользователя"""
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
     c.execute("""
@@ -195,7 +190,6 @@ def get_latest_subscription(user_id: int) -> Optional[str]:
     return result[0] if result else None
 
 def get_all_active_users() -> List[int]:
-    """Получает всех пользователей с активными подписками"""
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
     c.execute("SELECT DISTINCT user_id FROM subscriptions WHERE status = 'active'")
@@ -204,11 +198,9 @@ def get_all_active_users() -> List[int]:
     return user_ids
 
 def get_user_stats():
-    """Получает статистику пользователей"""
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
     
-    # Топ пользователи по активности
     c.execute("""
         SELECT u.user_id, u.username, COUNT(s.id) as sub_count
         FROM users u
@@ -223,11 +215,9 @@ def get_user_stats():
     return {"top_users": top_users}
 
 def get_payment_stats():
-    """Получает статистику платежей"""
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
     
-    # Статистика по тарифам
     c.execute("""
         SELECT tarif, COUNT(*) as count, SUM(days) as total_days
         FROM payments 
@@ -241,7 +231,6 @@ def get_payment_stats():
     return {"tarif_stats": tarif_stats}
 
 def search_user(query: str):
-    """Поиск пользователя по ID или username"""
     conn = sqlite3.connect(DB_FILE)
     c = conn.cursor()
     
@@ -254,33 +243,76 @@ def search_user(query: str):
     conn.close()
     return result
 
+def get_user_payments(user_id: int) -> List[Tuple]:
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("""
+        SELECT payment_id, tarif, days, status, created_at 
+        FROM payments 
+        WHERE user_id = ? 
+        ORDER BY created_at DESC
+    """, (user_id,))
+    payments = c.fetchall()
+    conn.close()
+    return payments
+
 def get_pending_yookassa_payments():
-     """Возвращает все платежи ЮKassa со статусом pending"""
-     conn = sqlite3.connect(DB_FILE)
-     c = conn.cursor()
-     c.execute("""
-         SELECT payment_id
-         FROM payments
-         WHERE status = 'pending'
-     """) 
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("""
+        SELECT payment_id
+        FROM payments
+        WHERE status = 'pending'
+    """) 
 
-     rows = c.fetchall()
-     conn.close()
+    rows = c.fetchall()
+    conn.close()
 
-     return [{"payment_id": row[0]} for row in rows]
-
+    return [{"payment_id": row[0]} for row in rows]
 
 def mark_payment_as_completed(payment_id: str):
-     """Помечает платёж как обработанный"""
-     conn = sqlite3.connect(DB_FILE)
-     c = conn.cursor()
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
 
-     c.execute("""
-         UPDATE payments
-         SET status = 'completed'
-         WHERE payment_id = ?
-     """, (payment_id,))
+    c.execute("""
+        UPDATE payments
+        SET status = 'completed'
+        WHERE payment_id = ?
+    """, (payment_id,))
 
-     conn.commit()
-     conn.close()
+    conn.commit()
+    conn.close()
 
+def set_user_promo_discount(user_id: int, promo_code: str, discount: int):
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("UPDATE user_promo_discounts SET is_used = 1 WHERE user_id = ? AND is_used = 0", (user_id,))
+    created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    c.execute("""
+        INSERT INTO user_promo_discounts (user_id, promo_code, discount, created_at, is_used)
+        VALUES (?, ?, ?, ?, 0)
+    """, (user_id, promo_code, discount, created_at))
+    conn.commit()
+    conn.close()
+
+def get_user_active_discount(user_id: int) -> Optional[Tuple[str, int]]:
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("""
+        SELECT promo_code, discount FROM user_promo_discounts
+        WHERE user_id = ? AND is_used = 0
+        ORDER BY created_at DESC LIMIT 1
+    """, (user_id,))
+    result = c.fetchone()
+    conn.close()
+    return result
+
+def use_user_discount(user_id: int):
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("""
+        UPDATE user_promo_discounts SET is_used = 1
+        WHERE user_id = ? AND is_used = 0
+    """, (user_id,))
+    conn.commit()
+    conn.close()

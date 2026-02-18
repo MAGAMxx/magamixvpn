@@ -7,10 +7,12 @@ from yookassa import Configuration, Payment
 
 from config.settings import ADMIN_IDS
 from config.payments import TARIFS, STARS_PRICES, PAYMENT_METHODS, YOOKASSA_SHOP_ID, YOOKASSA_SECRET_KEY
-from database.models import add_payment, get_latest_subscription, get_pending_yookassa_payments, mark_payment_as_completed
+from database.models import (
+    add_payment, get_latest_subscription, get_pending_yookassa_payments, 
+    mark_payment_as_completed, get_user_active_discount, use_user_discount
+)
 from services.hiddify_service import HiddifyService
 
-# Настройка ЮKassa
 Configuration.account_id = YOOKASSA_SHOP_ID
 Configuration.secret_key = YOOKASSA_SECRET_KEY
 
@@ -18,7 +20,6 @@ payment_router = Router()
 hiddify_service = HiddifyService()
 
 def extend_or_create_subscription(user_id: int, added_days: int):
-    """Продлевает или создаёт подписку"""
     existing_uuid = get_latest_subscription(user_id)
     
     if existing_uuid:
@@ -39,7 +40,6 @@ def extend_or_create_subscription(user_id: int, added_days: int):
 
 @payment_router.callback_query(F.data.startswith("tarif_"))
 async def tarif_chosen(callback: CallbackQuery, state: FSMContext):
-    """Выбор тарифа"""
     tarif_name = callback.data.split("_", 1)[1]
     
     if tarif_name not in TARIFS:
@@ -49,23 +49,45 @@ async def tarif_chosen(callback: CallbackQuery, state: FSMContext):
     days, rub_price = TARIFS[tarif_name]
     stars_price = STARS_PRICES.get(tarif_name, rub_price // 6)
     
+    user_id = callback.from_user.id
+    discount_info = get_user_active_discount(user_id)
+    
+    discount_text = ""
+    final_rub_price = rub_price
+    final_stars_price = stars_price
+    
+    if discount_info:
+        promo_code, discount_percent = discount_info
+        final_rub_price = max(1, rub_price - int(rub_price * discount_percent / 100))
+        final_stars_price = max(1, stars_price - int(stars_price * discount_percent / 100))
+    
     await state.update_data(
         tarif=tarif_name,
         days=days,
-        rub_price=rub_price,
-        stars_price=stars_price
+        rub_price=final_rub_price,
+        stars_price=final_stars_price,
+        original_rub_price=rub_price,
+        has_discount=discount_info is not None
     )
     
-    text = (
-        f"Вы выбрали тариф **{tarif_name}** \n\n"
-        f"Стоимость: **{rub_price} ₽**\n\n"
-        "Выберите удобный способ оплаты:"
-    )
+    if discount_info:
+        text = (
+            f"Вы выбрали тариф **{tarif_name}**\n\n"
+            f"🎫 Промокод: **{promo_code}** (−{discount_percent}%)\n"
+            f"💰 Стоимость: **{final_rub_price} ₽**\n\n"
+            "Выберите удобный способ оплаты:"
+        )
+    else:
+        text = (
+            f"Вы выбрали тариф **{tarif_name}** \n\n"
+            f"Стоимость: **{rub_price} ₽**\n\n"
+            "Выберите удобный способ оплаты:"
+        )
     
     kb = []
     for method_key, method_title in PAYMENT_METHODS.items():
         if method_key == "stars":
-            button_text = f"Оплата звёздами ({stars_price})"
+            button_text = f"Оплата звёздами ({final_stars_price})"
         else:
             button_text = method_title
             
@@ -85,7 +107,6 @@ async def tarif_chosen(callback: CallbackQuery, state: FSMContext):
 
 @payment_router.callback_query(F.data.startswith("pay_stars_"))
 async def pay_with_stars(callback: CallbackQuery, state: FSMContext):
-    """Оплата звёздами Telegram"""
     data = await state.get_data()
     tarif_name = callback.data.split("_", 2)[2]
     days = data["days"]
@@ -99,7 +120,7 @@ async def pay_with_stars(callback: CallbackQuery, state: FSMContext):
             title=f"Magam VPN — {tarif_name}",
             description=f"Доступ к премиум VPN на {days} дней",
             payload=f"vpn_{callback.from_user.id}_{tarif_name}_{days}",
-            provider_token="",  # для Stars оставляем пустым
+            provider_token="",
             currency="XTR",
             prices=prices,
             need_name=False,
@@ -118,7 +139,6 @@ async def pay_with_stars(callback: CallbackQuery, state: FSMContext):
 
 @payment_router.callback_query(F.data.startswith("pay_yookassa_"))
 async def pay_yookassa(callback: CallbackQuery, state: FSMContext):
-    """Оплата через ЮKassa"""
     data = await state.get_data()
     tarif_name = callback.data.split("_", 2)[2]
     days = data["days"]
@@ -199,7 +219,6 @@ async def pay_yookassa(callback: CallbackQuery, state: FSMContext):
 
 @payment_router.pre_checkout_query()
 async def pre_checkout_handler(pre_checkout_query: PreCheckoutQuery):
-    """Обработчик предварительной проверки оплаты"""
     await pre_checkout_query.bot.answer_pre_checkout_query(
         pre_checkout_query_id=pre_checkout_query.id,
         ok=True
@@ -207,7 +226,6 @@ async def pre_checkout_handler(pre_checkout_query: PreCheckoutQuery):
 
 @payment_router.message(F.successful_payment)
 async def successful_stars_payment(message: Message):
-    """Успешная оплата звёздами"""
     payment = message.successful_payment
     user_id = message.from_user.id
    
@@ -215,12 +233,14 @@ async def successful_stars_payment(message: Message):
         _, uid_str, tarif_name, days_str = payment.invoice_payload.split("_")
         days = int(days_str)
     except:
-        days = 7  # fallback
+        days = 7
        
     result = extend_or_create_subscription(user_id, days)
    
     if result:
-        await asyncio.sleep(8)  # даём Hiddify время
+        use_user_discount(user_id)
+        
+        await asyncio.sleep(8)
         text = (
             f"🎉 Оплата через ⭐ Stars прошла успешно!\n\n"
             f"Добавлено **+{days} дней** к подписке!\n"
@@ -232,7 +252,6 @@ async def successful_stars_payment(message: Message):
         ])
         await message.answer(text, reply_markup=kb, parse_mode="Markdown")
     
-        # Уведомляем админов
         admin_text = (
             f"⭐ НОВАЯ ОПЛАТА Stars!\n"
             f"Пользователь: {user_id} (@{message.from_user.username or 'нет'})\n"
@@ -249,54 +268,51 @@ async def successful_stars_payment(message: Message):
         await message.answer("❌ Ошибка при создании подписки. Обратитесь в поддержку.")
 
 async def notify_admins(bot, text: str):
-     for admin_id in ADMIN_IDS:
-         try:
-             await bot.send_message(admin_id, text)
-         except Exception as e:
-             print(f"Ошибка отправки админу {admin_id}: {e}")
+    for admin_id in ADMIN_IDS:
+        try:
+            await bot.send_message(admin_id, text)
+        except Exception as e:
+            print(f"Ошибка отправки админу {admin_id}: {e}")
 
 
 async def yookassa_payment_watcher(bot):
-     """     Периодически проверяет неоплаченные платежи ЮKassa     """
-     print("🔁 ЮKassa watcher запущен")
+    print("🔁 ЮKassa watcher запущен")
       
-     while True:
-         try:
-             # ⚠️ тебе нужна функция получения НЕОБРАБОТАННЫХ платежей
-             # пример: get_pending_payments()
-             payments = get_pending_yookassa_payments()
+    while True:
+        try:
+            payments = get_pending_yookassa_payments()
               
-             for payment_data in payments:
-                 payment_id = payment_data["payment_id"] 
-                 payment = Payment.find_one(payment_id)
+            for payment_data in payments:
+                payment_id = payment_data["payment_id"] 
+                payment = Payment.find_one(payment_id)
                   
-                 if payment.status != "succeeded":
-                     continue
+                if payment.status != "succeeded":
+                    continue
                  
-                 metadata = payment.metadata
-                 user_id = int(metadata["user_id"])
-                 days = int(metadata["days"])
-                 tarif = metadata["tarif"]
+                metadata = payment.metadata
+                user_id = int(metadata["user_id"])
+                days = int(metadata["days"])
+                tarif = metadata["tarif"]
  
-                 # продлеваем подписку
-                 result = extend_or_create_subscription(user_id, days)
+                result = extend_or_create_subscription(user_id, days)
                   
-                 if result:
-                     mark_payment_as_completed(payment_id)
+                if result:
+                    mark_payment_as_completed(payment_id)
+                    
+                    use_user_discount(user_id)
                       
-                     text = (
-                         f"💳 ЮKassa ОПЛАТА УСПЕШНА\n\n"
-                         f"👤 Пользователь: {user_id}\n"
-                         f"📦 Тариф: {tarif}\n"
-                         f"⏳ Дней: {days} \n"
-                         f"🆔 Payment ID: {payment_id}\n"
-                         f"🕒 {datetime.now()}" 
-                     )
+                    text = (
+                        f"💳 ЮKassa ОПЛАТА УСПЕШНА\n\n"
+                        f"👤 Пользователь: {user_id}\n"
+                        f"📦 Тариф: {tarif}\n"
+                        f"⏳ Дней: {days} \n"
+                        f"🆔 Payment ID: {payment_id}\n"
+                        f"🕒 {datetime.now()}" 
+                    )
                       
-                     await notify_admins(bot, text)
+                    await notify_admins(bot, text)
 
-         except Exception as e:
-             print(f"❌ Ошибка watcher ЮKassa: {e}")
+        except Exception as e:
+            print(f"❌ Ошибка watcher ЮKassa: {e}")
 
-         await asyncio.sleep(60)  # ⏱ проверка раз в минуту
-
+        await asyncio.sleep(60)

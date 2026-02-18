@@ -10,7 +10,8 @@ from config.apps import HAPP_LINKS
 from config.payments import TARIFS
 from database.models import (
     add_user_if_new, user_got_free, mark_got_free, 
-    get_latest_subscription, add_review
+    get_latest_subscription, add_review,
+    set_user_promo_discount, get_user_active_discount
 )
 from services.hiddify_service import HiddifyService
 
@@ -20,13 +21,12 @@ hiddify_service = HiddifyService()
 class States(StatesGroup):
     waiting_free_check = State()
     waiting_review = State()
+    waiting_promo_code = State()
 
 async def give_referral_bonus(referrer_id: int, referred_user_id: int, bot):
-    """Выдаёт реферальный бонус"""
     existing_uuid = get_latest_subscription(referrer_id)
     added_days = REFERRAL_BONUS_DAYS
     
-    # Получаем информацию о пользователях
     try:
         referrer_info = await bot.get_chat(referrer_id)
         referred_info = await bot.get_chat(referred_user_id)
@@ -60,7 +60,6 @@ async def give_referral_bonus(referrer_id: int, referred_user_id: int, bot):
             f"🎉 Новый друг по твоей ссылке! +{added_days} дня к подписке добавлено!"
         )
         
-        # Отправляем красочное уведомление в админскую группу в тему рефералов
         from datetime import datetime
         current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         
@@ -80,7 +79,7 @@ async def give_referral_bonus(referrer_id: int, referred_user_id: int, bot):
                 f"┣ **Серверы:** RU + NL (оба)\n"
                 f"┗ **Статус:** ✅ Успешно начислен\n\n"
                 f"🕒 **Время:** `{current_time}`\n\n"
-                f"━━━━━━━━━━━━━━━━\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
                 f"💰 **Реферальная программа работает!**"
             )
             
@@ -93,7 +92,6 @@ async def give_referral_bonus(referrer_id: int, referred_user_id: int, bot):
         except Exception as e:
             print(f"Ошибка отправки уведомления о реферале в группу: {e}")
             
-            # Fallback - отправляем админам в личку если группа недоступна
             fallback_text = f"Реферал от {referrer_id} → +{added_days} дней на обоих серверах для {referred_user_id}"
             for admin_id in ADMIN_IDS:
                 try:
@@ -102,7 +100,6 @@ async def give_referral_bonus(referrer_id: int, referred_user_id: int, bot):
                     pass
 
 def tarifs_menu():
-    """Создаёт меню тарифов"""
     kb = []
     for name, (days, price) in TARIFS.items():
         text = f"{name} — {price}₽"
@@ -116,7 +113,6 @@ def tarifs_menu():
     return InlineKeyboardMarkup(inline_keyboard=kb)
 
 async def send_main_menu(event, user_name, user_id):
-    """Отправляет главное меню"""
     text = (
         f"Привет, {user_name} 👋\n\n"
         "Magam VPN — премиум VPN в РФ 🚀\n\n"
@@ -134,11 +130,9 @@ async def send_main_menu(event, user_name, user_id):
         [InlineKeyboardButton(text="🆘 Поддержка", url="t.me/magamix_support")]
     ]
     
-    # Добавляем кнопку бесплатных дней если не брал
     if not user_got_free(user_id):
         kb.insert(1, [InlineKeyboardButton(text="🎁 Бесплатно 3 дня", callback_data="free_3days")])
     
-    # Добавляем кнопку отзыва только если пользователь имел доступ к сервису
     has_subscription = get_latest_subscription(user_id) is not None
     used_free_trial = user_got_free(user_id)
     
@@ -154,12 +148,10 @@ async def send_main_menu(event, user_name, user_id):
 
 @user_router.message(Command("start"))
 async def start(message: Message):
-    """Обработчик команды /start"""
     user_id = message.from_user.id
     username = message.from_user.username or "нет"
     name = message.from_user.first_name
 
-    # Проверяем реферальный параметр
     args = message.text.split()
     referrer_id = None
     if len(args) > 1 and args[1].startswith("ref_"):
@@ -170,7 +162,6 @@ async def start(message: Message):
         except:
             referrer_id = None
 
-    # Добавляем пользователя, если новый
     is_new = add_user_if_new(user_id, username)
 
     if is_new and referrer_id:
@@ -180,7 +171,6 @@ async def start(message: Message):
 
 @user_router.callback_query(F.data == "back_main")
 async def back_main(callback: CallbackQuery):
-    """Возврат в главное меню"""
     user_name = callback.from_user.first_name
     user_id = callback.from_user.id
     await send_main_menu(callback, user_name, user_id)
@@ -188,14 +178,70 @@ async def back_main(callback: CallbackQuery):
 
 @user_router.callback_query(F.data == "pay")
 async def pay(callback: CallbackQuery):
-    """Меню оплаты"""
     await callback.message.edit_text("💸 Выбери тариф:", reply_markup=tarifs_menu())
     await callback.answer()
 
-# =========== НОВАЯ ВЕРСИЯ (полностью готовая) ===========
+@user_router.message(Command("promo"))
+async def promo_command(message: Message, state: FSMContext):
+    user_id = message.from_user.id
+    
+    active_discount = get_user_active_discount(user_id)
+    if active_discount:
+        promo_code, discount = active_discount
+        await message.answer(
+            f"🎫 У вас уже активирован промокод **{promo_code}** со скидкой **{discount}%**\n\n"
+            f"Скидка применится автоматически при следующей покупке.",
+            parse_mode="Markdown"
+        )
+        return
+    
+    await message.answer(
+        "🎫 **Введите промокод**\n\n"
+        "Напишите ваш промокод, и если он действителен, вы получите скидку на следующую покупку!",
+        parse_mode="Markdown"
+    )
+    await state.set_state(States.waiting_promo_code)
+
+@user_router.message(States.waiting_promo_code)
+async def process_promo_code(message: Message, state: FSMContext):
+    user_id = message.from_user.id
+    entered_code = message.text.strip().upper()
+    
+    from admin.promo import get_active_promo_codes
+    promo_codes = get_active_promo_codes()
+    
+    if entered_code not in promo_codes:
+        await message.answer(
+            "❌ **Промокод не найден**\n\n"
+            "Проверьте правильность ввода и попробуйте ещё раз.\n"
+            "Для отмены отправьте /start",
+            parse_mode="Markdown"
+        )
+        return
+    
+    discount = promo_codes[entered_code]
+    
+    set_user_promo_discount(user_id, entered_code, discount)
+    
+    import sqlite3
+    conn = sqlite3.connect("database/data/users.db")
+    c = conn.cursor()
+    c.execute("INSERT INTO promo_usage (promo_code, user_id, discount_amount) VALUES (?, ?, ?)",
+              (entered_code, user_id, discount))
+    conn.commit()
+    conn.close()
+    
+    await message.answer(
+        f"✅ **Промокод активирован!**\n\n"
+        f"🎫 Промокод: **{entered_code}**\n"
+        f"💰 Скидка: **{discount}%**\n\n"
+        f"Скидка будет применена к вашей следующей покупке автоматически.\n"
+        f"Скидка действует на **1 покупку**.",
+        parse_mode="Markdown"
+    )
+    await state.clear()
 
 async def show_device_selection(callback: CallbackQuery):
-    """Показывает выбор устройства"""
     text = "📱 **Выберите ваше устройство:**"
     
     kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -211,17 +257,14 @@ async def show_device_selection(callback: CallbackQuery):
 
 @user_router.callback_query(F.data == "install")
 async def install(callback: CallbackQuery):
-    """Меню установки приложений"""
     await show_device_selection(callback)
     await callback.answer()
 
 @user_router.callback_query(F.data.startswith("install_"))
 async def install_device(callback: CallbackQuery):
-    """Показывает инструкции для выбранного устройства"""
     device = callback.data.replace("install_", "")
     user_id = callback.from_user.id
     
-    # Информация об устройствах
     device_info = {
         "android": {"name": "Android", "icon": "🤖"},
         "ios": {"name": "iOS", "icon": "🍎"},
@@ -233,11 +276,9 @@ async def install_device(callback: CallbackQuery):
     device_name = device_info.get(device, {}).get("name", device.capitalize())
     device_icon = device_info.get(device, {}).get("icon", "📱")
     
-    # Проверяем подписку пользователя
     selected_uuid = get_latest_subscription(user_id)
     
     if not selected_uuid:
-        # Если НЕТ подписки
         text = (
             f"{device_icon} **Установка VPN для {device_name}**\n\n"
             "❌ **У вас нет активной подписки!**\n\n"
@@ -251,15 +292,12 @@ async def install_device(callback: CallbackQuery):
         ])
         
     else:
-        # Если ЕСТЬ подписка
         from config.settings import DEEPLINK_BASE
         from config.servers import SERVERS_CONFIG
         
-        # Формируем ссылки на оба сервера
         deeplink_ru = f"{DEEPLINK_BASE}{SERVERS_CONFIG['RU']['client_path']}/{selected_uuid}/"
         deeplink_nl = f"{DEEPLINK_BASE}{SERVERS_CONFIG['NL']['client_path']}/{selected_uuid}/"
         
-        # Получаем правильную ссылку на Happ для устройства
         device_map = {
             "android": "Android",
             "ios": "iOS",
@@ -299,7 +337,6 @@ async def install_device(callback: CallbackQuery):
 
 @user_router.callback_query(F.data == "referral")
 async def referral(callback: CallbackQuery):
-    """Реферальная система"""
     user_id = callback.from_user.id
     ref_link = f"https://t.me/magam_vpn_bot?start=ref_{user_id}"
     
@@ -321,7 +358,6 @@ async def referral(callback: CallbackQuery):
 
 @user_router.callback_query(F.data == "free_3days")
 async def free_3days(callback: CallbackQuery, state: FSMContext):
-    """Бесплатные 3 дня"""
     user_id = callback.from_user.id
     
     if user_got_free(user_id):
@@ -348,20 +384,17 @@ async def free_3days(callback: CallbackQuery, state: FSMContext):
 
 @user_router.callback_query(F.data == "check_subscription")
 async def check_subscription(callback: CallbackQuery, state: FSMContext):
-    """Проверка подписки на канал"""
     user_id = callback.from_user.id
     
     try:
-        # Проверяем подписку на канал
         member = await callback.bot.get_chat_member("@MAGAMIX_VPN", user_id)
         if member.status in ["member", "administrator", "creator"]:
-            # Выдаём бесплатные дни
             result = hiddify_service.create_or_extend_both(added_days=3, user_id=user_id)
             
             if result:
                 mark_got_free(user_id)
                 
-                await asyncio.sleep(8)  # даём Hiddify время
+                await asyncio.sleep(8)
                 
                 text = (
                     "🎉 **Поздравляем!**\n\n"
@@ -389,10 +422,8 @@ async def check_subscription(callback: CallbackQuery, state: FSMContext):
 
 @user_router.callback_query(F.data == "leave_review")
 async def leave_review(callback: CallbackQuery, state: FSMContext):
-    """Оставить отзыв"""
     user_id = callback.from_user.id
     
-    # Проверяем, может ли пользователь оставить отзыв
     has_subscription = get_latest_subscription(user_id) is not None
     used_free_trial = user_got_free(user_id)
     
@@ -420,13 +451,11 @@ async def leave_review(callback: CallbackQuery, state: FSMContext):
 
 @user_router.message(States.waiting_review)
 async def process_review(message: Message, state: FSMContext):
-    """Обработка отзыва"""
     user_id = message.from_user.id
     username = message.from_user.username or "none"
     first_name = message.from_user.first_name or "Неизвестно"
     review_text = message.text
     
-    # Добавляем отзыв в БД и получаем его номер
     review_id = add_review(user_id, username, review_text)
     
     await message.answer(
@@ -437,7 +466,6 @@ async def process_review(message: Message, state: FSMContext):
     
     await state.clear()
     
-    # Отправляем отзыв в админскую группу в тему отзывов с кнопками модерации
     from datetime import datetime
     current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     
@@ -452,7 +480,6 @@ async def process_review(message: Message, state: FSMContext):
         f"🕒 **Время:** `{current_time}`"
     )
     
-    # Кнопки модерации
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(text="✅ Одобрить", callback_data=f"approve_review_{review_id}"),
@@ -472,7 +499,6 @@ async def process_review(message: Message, state: FSMContext):
     except Exception as e:
         print(f"Ошибка отправки отзыва в админскую группу: {e}")
         
-        # Fallback - отправляем админам в личку
         for admin_id in ADMIN_IDS:
             try:
                 await message.bot.send_message(admin_id, admin_text, parse_mode="Markdown", reply_markup=kb)
